@@ -3297,21 +3297,55 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
         }
         if (bRocket)
         {
-            for (int32 I = 0; I < 5; ++I)
+            const float RocketScale = FMath::Clamp(Scale, 0.58f, 1.18f);
+            const float BodyLength = FMath::Clamp(52.0f * RocketScale + BulletSpeed * 0.0022f, 36.0f, 72.0f);
+            const float BodyWidth = FMath::Clamp(13.5f * RocketScale, 8.0f, 16.0f);
+            const float FlameLen = FMath::Clamp(BulletSpeed * 0.038f, 82.0f, 168.0f) * (0.88f + 0.12f * Flicker);
+            const FVector2D Nose = P + BulletDir * BodyLength * 0.46f;
+            const FVector2D Engine = P - BulletDir * BodyLength * 0.44f;
+            const FVector2D FlameTail = Engine - BulletDir * FlameLen;
+            const FLinearColor ExhaustHot = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.16f, 0.06f, 0.92f) : FLinearColor(1.0f, 0.74f, 0.16f, 0.92f);
+            const FLinearColor ExhaustCore = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.74f, 0.46f, 0.96f) : FLinearColor(1.0f, 0.96f, 0.64f, 0.96f);
+
+            for (int32 I = 0; I < 8; ++I)
             {
-                const float K = static_cast<float>(I) + 1.0f;
-                const float SmokeSize = (17.0f + K * 7.5f) * Scale;
-                const FVector2D SmokePos = P - BulletDir * (18.0f + K * 15.5f) + Perp * FMath::Sin(Time * 18.0f + K * 1.7f) * (4.5f + K * 1.2f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 12, SmokePos, FVector2D(SmokeSize * 1.25f, SmokeSize * 0.70f), FLinearColor(0.22f, 0.24f, 0.25f, 0.24f / K));
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 13, SmokePos - BulletDir * 5.0f, FVector2D(SmokeSize * 0.54f, SmokeSize * 0.30f), FLinearColor(1.0f, 0.46f, 0.08f, 0.18f / K));
+                const float K = (static_cast<float>(I) + 1.0f) / 8.0f;
+                const float SmokeWave = FMath::Sin(Time * 10.0f + K * 9.4f);
+                const float SmokeSize = FMath::Lerp(13.0f, 38.0f, K) * RocketScale;
+                const FVector2D SmokePos = Engine
+                    - BulletDir * FMath::Lerp(18.0f, FlameLen * 1.12f, K)
+                    + Perp * SmokeWave * FMath::Lerp(3.0f, 18.0f, K);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.55f, SmokeSize * 0.82f), FLinearColor(0.05f, 0.055f, 0.060f, 0.16f * (1.0f - K * 0.46f)));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos + Perp * SmokeWave * 2.0f, FVector2D(SmokeSize * 0.95f, SmokeSize * 0.52f), FLinearColor(0.34f, 0.36f, 0.34f, 0.14f * (1.0f - K * 0.54f)));
             }
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Tail - BulletDir * 26.0f, Tip, FLinearColor(1.0f, 0.36f, 0.04f, 0.30f * Flicker), 20.0f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, Tail - BulletDir * 10.0f, Tip + BulletDir * 4.0f, FLinearColor(1.0f, 0.78f, 0.18f, 0.88f * Flicker), 7.8f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, P - BulletDir * 18.0f, Tip + BulletDir * 6.0f, FLinearColor(0.70f, 0.78f, 0.88f, 0.96f), 5.8f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, P - BulletDir * 12.0f, Tip + BulletDir * 8.0f, FLinearColor(1.0f, 0.98f, 0.78f, 1.0f), 2.2f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, P - BulletDir * 7.0f + Perp * 5.0f, P - BulletDir * 16.0f + Perp * 11.0f, FLinearColor(1.0f, 0.54f, 0.10f, 0.72f), 1.8f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, P - BulletDir * 7.0f - Perp * 5.0f, P - BulletDir * 16.0f - Perp * 11.0f, FLinearColor(1.0f, 0.54f, 0.10f, 0.72f), 1.8f);
-            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 18, Tip, FVector2D(23.0f * Scale, 14.0f * Scale), FLinearColor(1.0f, 0.58f, 0.08f, 0.42f * Flicker));
+
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, Engine - BulletDir * 4.0f, FlameTail, FLinearColor(1.0f, 0.20f, 0.02f, 0.18f * Flicker), BodyWidth * 2.55f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Engine, FlameTail + Perp * FMath::Sin(Time * 17.0f) * 9.0f, FLinearColor(ExhaustHot.R, ExhaustHot.G, ExhaustHot.B, 0.68f * Flicker), BodyWidth * 1.10f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Engine + BulletDir * 1.5f, Engine - BulletDir * FlameLen * 0.46f, FLinearColor(ExhaustCore.R, ExhaustCore.G, ExhaustCore.B, 0.92f * Flicker), BodyWidth * 0.42f);
+            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 15, Engine - BulletDir * FlameLen * 0.58f, FVector2D(BodyWidth * 1.55f, BodyWidth * 0.86f), FLinearColor(1.0f, 0.46f, 0.08f, 0.34f * Flicker));
+
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, Engine - BulletDir * 3.0f, Nose, FLinearColor(0.02f, 0.025f, 0.030f, 0.44f), BodyWidth + 7.0f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, Engine, Nose, FLinearColor(0.38f, 0.45f, 0.52f, 0.98f), BodyWidth);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine + Perp * BodyWidth * 0.18f, Nose - BulletDir * BodyLength * 0.16f + Perp * BodyWidth * 0.18f, FLinearColor(0.94f, 0.98f, 1.0f, 0.54f), 1.8f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine - Perp * BodyWidth * 0.24f, Nose - BulletDir * BodyLength * 0.22f - Perp * BodyWidth * 0.24f, FLinearColor(0.10f, 0.14f, 0.18f, 0.54f), 2.2f);
+
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, Nose - BulletDir * BodyWidth * 1.05f, Nose, FLinearColor(1.0f, 0.24f, 0.10f, 0.98f), BodyWidth * 0.72f);
+            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 20, Nose + BulletDir * 1.5f, FVector2D(BodyWidth * 1.10f, BodyWidth * 0.72f), FLinearColor(1.0f, 0.86f, 0.46f, 0.34f * Flicker));
+
+            const FVector2D FinRootA = Engine + Perp * BodyWidth * 0.45f;
+            const FVector2D FinRootB = Engine - Perp * BodyWidth * 0.45f;
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootA, Engine - BulletDir * BodyWidth * 1.12f + Perp * BodyWidth * 1.28f, FLinearColor(0.88f, 0.22f, 0.10f, 0.86f), 2.8f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootB, Engine - BulletDir * BodyWidth * 1.12f - Perp * BodyWidth * 1.28f, FLinearColor(0.88f, 0.22f, 0.10f, 0.82f), 2.8f);
+
+            for (int32 I = 0; I < 7; ++I)
+            {
+                const float K = static_cast<float>(I) / 6.0f;
+                const float SparkSide = (K - 0.5f) * BodyWidth * 2.8f;
+                const float SparkBack = FMath::Lerp(14.0f, FlameLen * 0.72f, K);
+                const FVector2D SparkStart = Engine - BulletDir * (SparkBack * 0.28f) + Perp * SparkSide * 0.22f;
+                const FVector2D SparkEnd = Engine - BulletDir * SparkBack + Perp * (SparkSide + FMath::Sin(Time * 21.0f + K * 12.0f) * BodyWidth * 0.55f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 21, SparkStart, SparkEnd, FLinearColor(1.0f, 0.82f, 0.30f, 0.28f * Flicker), I % 2 == 0 ? 1.4f : 0.9f);
+            }
         }
         else
         {
@@ -3440,9 +3474,33 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             }
             else if (Fx.Type == TEXT("skill_missile_trail"))
             {
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, P - Dir * 28.0f, E, FLinearColor(1.0f, 0.35f, 0.06f, 0.28f * A), 19.0f);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, P - Dir * 12.0f, E + Dir * 8.0f, FLinearColor(C.R, C.G, C.B, 0.84f * A), 5.0f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 29, E, FVector2D(18.0f + Pop * 10.0f, 13.0f + Pop * 6.0f), FLinearColor(1.0f, 0.92f, 0.54f, 0.70f * A));
+                const float TrailLen = FVector2D::Distance(P, E);
+                const float RocketBody = FMath::Clamp(22.0f + R * 0.08f, 20.0f, 42.0f);
+                const float RocketWidth = FMath::Clamp(7.0f + R * 0.025f, 7.0f, 15.0f);
+                const FVector2D Nose = E + Dir * RocketBody * 0.34f;
+                const FVector2D Engine = E - Dir * RocketBody * 0.50f;
+                const FVector2D FlameTail = FMath::Lerp(P, Engine, 0.18f);
+
+                for (int32 I = 0; I < 5; ++I)
+                {
+                    const float K = (static_cast<float>(I) + 1.0f) / 5.0f;
+                    const FVector2D Smoke = Engine - Dir * TrailLen * K * 0.72f + Perp * FMath::Sin(Spin * 2.0f + K * 8.0f) * (5.0f + K * 12.0f);
+                    const float SmokeSize = FMath::Lerp(10.0f, 26.0f, K);
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 24, Smoke, FVector2D(SmokeSize * 1.45f, SmokeSize * 0.72f), FLinearColor(0.06f, 0.065f, 0.070f, 0.14f * A * (1.0f - K * 0.34f)));
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 25, Smoke + Perp * 2.0f, FVector2D(SmokeSize * 0.70f, SmokeSize * 0.36f), FLinearColor(0.82f, 0.44f, 0.12f, 0.12f * A * (1.0f - K * 0.42f)));
+                }
+
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 26, Engine, FlameTail, FLinearColor(1.0f, 0.20f, 0.02f, 0.22f * A), RocketWidth * 2.45f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, Engine, FMath::Lerp(Engine, FlameTail, 0.62f) + Perp * FMath::Sin(Spin) * 7.0f, FLinearColor(1.0f, 0.66f, 0.10f, 0.72f * A), RocketWidth * 0.95f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, Engine + Dir * 2.0f, Engine - Dir * RocketBody * 0.92f, FLinearColor(1.0f, 0.96f, 0.70f, 0.88f * A), RocketWidth * 0.34f);
+
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, Engine, Nose, FLinearColor(0.05f, 0.07f, 0.09f, 0.44f * A), RocketWidth + 5.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, Engine, Nose, FLinearColor(0.44f, 0.50f, 0.58f, 0.96f * A), RocketWidth);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 31, Engine + Perp * RocketWidth * 0.18f, Nose - Dir * RocketBody * 0.20f + Perp * RocketWidth * 0.18f, FLinearColor(1.0f, 1.0f, 0.94f, 0.48f * A), 1.4f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 32, Nose - Dir * RocketWidth * 1.0f, Nose, FLinearColor(C.R, C.G, C.B, 0.92f * A), RocketWidth * 0.62f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 32, Engine + Perp * RocketWidth * 0.42f, Engine - Dir * RocketWidth * 0.92f + Perp * RocketWidth * 1.22f, FLinearColor(1.0f, 0.24f, 0.10f, 0.76f * A), 2.1f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 32, Engine - Perp * RocketWidth * 0.42f, Engine - Dir * RocketWidth * 0.92f - Perp * RocketWidth * 1.22f, FLinearColor(1.0f, 0.24f, 0.10f, 0.70f * A), 2.1f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 33, Nose + Dir * 1.0f, FVector2D(RocketWidth * 1.25f + Pop * 5.0f, RocketWidth * 0.78f + Pop * 2.0f), FLinearColor(1.0f, 0.88f, 0.50f, 0.38f * A));
             }
             else if (Fx.Type == TEXT("skill_missile_launch"))
             {
