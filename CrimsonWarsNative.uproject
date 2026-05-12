@@ -1,0 +1,32 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.7",
+  "Category": "Games",
+  "Description": "Native Unreal C++ client for the Crimson Wars Node server.",
+  "Modules": [
+    {
+      "Name": "CrimsonWarsNative",
+      "Type": "Runtime",
+      "LoadingPhase": "Default",
+      "AdditionalDependencies": [
+        "Engine",
+        "Json",
+        "JsonUtilities"
+      ]
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "SunPosition",
+      "Enabled": true
+    },
+    {
+      "Name": "WebBrowserWidget",
+      "Enabled": true
+    },
+    {
+      "Name": "Niagara",
+      "Enabled": true
+    }
+  ]
+}
