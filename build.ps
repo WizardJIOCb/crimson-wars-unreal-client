@@ -1,0 +1,3 @@
+$script = Join-Path $PSScriptRoot "build.ps1"
+& powershell -ExecutionPolicy Bypass -File $script @args
+exit $LASTEXITCODE
