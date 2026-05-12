@@ -23,7 +23,6 @@ public:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
-    void HandleGlobalF10Pressed();
     bool IsNativeRendererActive() const { return bUseNativeRenderer; }
     bool IsNativeRunMenuOpen() const { return bNativeRunMenuOpen; }
     bool IsNativeStatsPanelOpen() const { return bNativeStatsPanelOpen; }
@@ -57,7 +56,6 @@ private:
     void ApplySyncedNativeIdentity();
     void SetNativeRenderMode(bool bEnableNativeRenderer, const FString& RoomCode = FString(), const FString& HeroId = FString(), bool bEnableNative3DView = false);
     void ApplyNativeRendererWidgetVisibility();
-    void ToggleNativeRenderModePressed();
     void StartNativeRoomFromSync(const FString& RoomCode, const FString& HeroId);
     void ApplyLocalMovement(float DeltaSeconds);
     void MoveForward(float Value);

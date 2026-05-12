@@ -602,7 +602,7 @@ void UCWNativeRunHudWidget::UpdateFromState(const FCWRoomSnapshot& State)
     }
     if (SkillsText)
     {
-        SkillsText->SetText(FText::FromString(TEXT("  1 / 2 / 3 quick slots | Space dodge | F10 web/native")));
+        SkillsText->SetText(FText::FromString(TEXT("  1 / 2 / 3 quick slots | Space dodge | Enter chat")));
     }
     if (MinimapText)
     {
@@ -937,11 +937,9 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
     DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 2, ChatPos + FVector2D(252.0f, 4.0f), FVector2D(24.0f, 23.0f), FLinearColor(0.02f, 0.12f, 0.18f, 0.92f), bChatOpen ? FLinearColor(0.42f, 1.0f, 0.72f, 0.60f) : FLinearColor(0.20f, 0.80f, 1.0f, 0.38f));
     DrawText(OutDrawElements, AllottedGeometry, TextLayer, ChatPos + FVector2D(258.0f, 7.0f), TEXT(">"), 12.0f, bChatOpen ? FLinearColor(0.64f, 1.0f, 0.78f, 0.96f) : FLinearColor(0.64f, 0.94f, 1.0f, 0.96f), true);
 
-    const FVector2D NativePos(Size.X - 122.0f, Size.Y - 74.0f);
-    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, NativePos, FVector2D(106.0f, 30.0f), FLinearColor(0.012f, 0.060f, 0.096f, 0.88f), FLinearColor(0.28f, 0.78f, 1.0f, 0.42f));
-    DrawText(OutDrawElements, AllottedGeometry, TextLayer, NativePos + FVector2D(17.0f, 8.0f), TEXT("Native F10"), 11.0f, FLinearColor(0.88f, 0.98f, 1.0f, 0.98f), true);
-    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, NativePos + FVector2D(42.0f, 36.0f), FVector2D(64.0f, 30.0f), FLinearColor(0.018f, 0.030f, 0.048f, 0.88f), FLinearColor(0.88f, 0.95f, 1.0f, 0.18f));
-    DrawText(OutDrawElements, AllottedGeometry, TextLayer, NativePos + FVector2D(59.0f, 44.0f), TEXT("Stats"), 11.0f, FLinearColor(0.88f, 0.94f, 1.0f, 0.96f), true);
+    const FVector2D StatsButtonPos(Size.X - 82.0f, Size.Y - 38.0f);
+    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, StatsButtonPos, FVector2D(64.0f, 30.0f), FLinearColor(0.018f, 0.030f, 0.048f, 0.88f), FLinearColor(0.88f, 0.95f, 1.0f, 0.18f));
+    DrawText(OutDrawElements, AllottedGeometry, TextLayer, StatsButtonPos + FVector2D(17.0f, 8.0f), TEXT("Stats"), 11.0f, FLinearColor(0.88f, 0.94f, 1.0f, 0.96f), true);
 
     if (Pawn && Pawn->IsNativePlayersPanelOpen())
     {
@@ -1049,8 +1047,8 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         const FVector2D ControlsPos = PanelPos + FVector2D(28.0f, 226.0f);
         DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 7, ControlsPos, FVector2D(PanelSize.X - 56.0f, PanelSize.Y - 330.0f), FLinearColor(0.006f, 0.014f, 0.024f, 0.86f), FLinearColor(0.74f, 0.92f, 1.0f, 0.18f));
         DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 14.0f), TEXT("Controls"), 15.0f, FLinearColor(0.84f, 0.94f, 1.0f, 0.96f), true);
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 42.0f), TEXT("WASD move     Mouse aim/shoot     Space dodge     F10 native/web"), 12.0f, FLinearColor(0.70f, 0.82f, 0.92f, 0.90f), false);
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 68.0f), TEXT("Menu now stays in UE. Web view is only opened by explicit button or F10."), 12.0f, FLinearColor(0.44f, 0.90f, 1.0f, 0.82f), true);
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 42.0f), TEXT("WASD move     Mouse aim/shoot     Space dodge     Enter chat"), 12.0f, FLinearColor(0.70f, 0.82f, 0.92f, 0.90f), false);
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 68.0f), TEXT("Run is rendered only by the native UE client."), 12.0f, FLinearColor(0.44f, 0.90f, 1.0f, 0.82f), true);
 
         auto DrawMenuButton = [&](const FVector2D& Pos, const FVector2D& ButtonSize, const FString& Label, const FLinearColor& Accent, bool bDanger)
         {
@@ -1060,10 +1058,8 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         };
 
         const FVector2D ResumePos = PanelPos + FVector2D(28.0f, PanelSize.Y - 78.0f);
-        const FVector2D WebPos = ResumePos + FVector2D(154.0f, 0.0f);
         const FVector2D LeavePos = PanelPos + FVector2D(PanelSize.X - 166.0f, PanelSize.Y - 78.0f);
         DrawMenuButton(ResumePos, FVector2D(136.0f, 42.0f), TEXT("Resume"), FLinearColor(0.22f, 0.94f, 1.0f, 0.48f), false);
-        DrawMenuButton(WebPos, FVector2D(156.0f, 42.0f), TEXT("Web view"), FLinearColor(0.74f, 0.92f, 1.0f, 0.24f), false);
         DrawMenuButton(LeavePos, FVector2D(138.0f, 42.0f), TEXT("Leave run"), FLinearColor(1.0f, 0.22f, 0.18f, 0.48f), true);
         return MenuLayer + 30;
     }

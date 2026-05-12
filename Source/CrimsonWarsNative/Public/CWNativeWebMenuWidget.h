@@ -36,9 +36,7 @@ public:
     FString GetSyncedPlayerName() const { return SyncedPlayerName; }
     FString GetSyncedHandoffToken() const { return SyncedHandoffToken; }
     int32 GetSyncedPlayerAccountId() const { return SyncedPlayerAccountId; }
-    void RequestNativeRendererFromWeb();
-    void NotifyNativeRendererActive(bool bActive);
-    void RestoreWebRunFocus();
+    void SuspendForNativeRun();
 
 private:
     void BuildWidgetTree();

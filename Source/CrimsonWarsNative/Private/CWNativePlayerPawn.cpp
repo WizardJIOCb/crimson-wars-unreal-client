@@ -39,12 +39,6 @@ public:
         }
 
         const FKey Key = InKeyEvent.GetKey();
-        if (Key == EKeys::F10)
-        {
-            Pawn->HandleGlobalF10Pressed();
-            return true;
-        }
-
         if (Pawn->HandleNativeChatKeyDown(Key))
         {
             return true;
@@ -560,11 +554,10 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
     const float MiniMapSize = FMath::Clamp(ViewportSize.Y * 0.23f, 138.0f, 188.0f);
     const FVector2D MenuPos(MapPos.X + MiniMapSize + 10.0f, 18.0f);
     const FVector2D PlayersPos(ViewportSize.X - 142.0f, 18.0f);
-    const FVector2D NativePos(ViewportSize.X - 122.0f, ViewportSize.Y - 74.0f);
     const FVector2D ChatPos(14.0f, FMath::Max(MapPos.Y + MiniMapSize + 46.0f, ViewportSize.Y - 158.0f));
     const FVector2D PlayersPlusPos = PlayersPos + FVector2D(92.0f, 8.0f);
     const FVector2D ChatSendPos = ChatPos + FVector2D(252.0f, 4.0f);
-    const FVector2D StatsButtonPos = NativePos + FVector2D(42.0f, 36.0f);
+    const FVector2D StatsButtonPos(ViewportSize.X - 82.0f, ViewportSize.Y - 38.0f);
 
     if (bNativeRunMenuOpen)
     {
@@ -572,20 +565,12 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
         const FVector2D PanelPos((ViewportSize.X - PanelSize.X) * 0.5f, (ViewportSize.Y - PanelSize.Y) * 0.5f);
         const FVector2D ClosePos = PanelPos + FVector2D(PanelSize.X - 48.0f, 18.0f);
         const FVector2D ResumePos = PanelPos + FVector2D(28.0f, PanelSize.Y - 78.0f);
-        const FVector2D WebPos = ResumePos + FVector2D(154.0f, 0.0f);
         const FVector2D LeavePos = PanelPos + FVector2D(PanelSize.X - 166.0f, PanelSize.Y - 78.0f);
 
         if (InRect(ClosePos, FVector2D(30.0f, 30.0f)) || InRect(ResumePos, FVector2D(136.0f, 42.0f)))
         {
             bNativeRunMenuOpen = false;
             ResetNativeInputState();
-            return true;
-        }
-        if (InRect(WebPos, FVector2D(156.0f, 42.0f)))
-        {
-            bNativeRunMenuOpen = false;
-            ResetNativeInputState();
-            SetNativeRenderMode(false, FString(), FString(), false);
             return true;
         }
         if (InRect(LeavePos, FVector2D(138.0f, 42.0f)))
@@ -648,17 +633,6 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
         {
             BeginNativeChat();
         }
-        return true;
-    }
-
-    if (InRect(NativePos, FVector2D(106.0f, 30.0f)))
-    {
-        NativeChatDraft.Reset();
-        bNativeChatOpen = false;
-        bNativeStatsPanelOpen = false;
-        bNativePlayersPanelOpen = false;
-        ResetNativeInputState();
-        HandleGlobalF10Pressed();
         return true;
     }
 
@@ -829,7 +803,6 @@ void ACWNativePlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
     PlayerInputComponent->BindAction(TEXT("NativeJoin"), IE_Pressed, this, &ACWNativePlayerPawn::JoinPressed);
     PlayerInputComponent->BindAction(TEXT("NativeLeave"), IE_Pressed, this, &ACWNativePlayerPawn::LeavePressed);
     PlayerInputComponent->BindAction(TEXT("ToggleNativeMenu"), IE_Pressed, this, &ACWNativePlayerPawn::ToggleMenuPressed);
-    PlayerInputComponent->BindAction(TEXT("ToggleNativeRenderer"), IE_Pressed, this, &ACWNativePlayerPawn::ToggleNativeRenderModePressed);
 }
 
 void ACWNativePlayerPawn::MoveForward(float Value)
@@ -1098,53 +1071,6 @@ void ACWNativePlayerPawn::ToggleMenuPressed()
     ResetNativeInputState();
 }
 
-void ACWNativePlayerPawn::ToggleNativeRenderModePressed()
-{
-    HandleGlobalF10Pressed();
-}
-
-void ACWNativePlayerPawn::HandleGlobalF10Pressed()
-{
-    FString SyncedRoomCode;
-    FString SyncedHeroId;
-    if (WebMenuWidget)
-    {
-        ApplySyncedNativeIdentity();
-        SyncedRoomCode = WebMenuWidget->GetSyncedRoomCode();
-        SyncedHeroId = WebMenuWidget->GetSyncedHeroId();
-    }
-    if (SyncedRoomCode.IsEmpty())
-    {
-        if (const UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>())
-        {
-            SyncedRoomCode = GI->CurrentRoomCode;
-            if (SyncedHeroId.IsEmpty())
-            {
-                SyncedHeroId = GI->DefaultPlayerClass;
-            }
-        }
-    }
-
-    if (!bUseNativeRenderer)
-    {
-        if (WebMenuWidget)
-        {
-            WebMenuWidget->RequestNativeRendererFromWeb();
-            return;
-        }
-        SetNativeRenderMode(true, SyncedRoomCode, SyncedHeroId, false);
-        return;
-    }
-
-    if (!bUseNative3DView)
-    {
-        SetNativeRenderMode(true, SyncedRoomCode, SyncedHeroId, true);
-        return;
-    }
-
-    SetNativeRenderMode(false, SyncedRoomCode, SyncedHeroId, false);
-}
-
 void ACWNativePlayerPawn::ApplySyncedNativeIdentity()
 {
     UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
@@ -1187,8 +1113,7 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
         }
         if (WebMenuWidget)
         {
-            WebMenuWidget->NotifyNativeRendererActive(true);
-            WebMenuWidget->HideMenu();
+            WebMenuWidget->SuspendForNativeRun();
         }
         if (PC)
         {
@@ -1223,11 +1148,9 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
     if (WebMenuWidget)
     {
         WebMenuWidget->ShowMenu();
-        WebMenuWidget->NotifyNativeRendererActive(false);
-        WebMenuWidget->RestoreWebRunFocus();
     }
 
-    UE_LOG(LogTemp, Display, TEXT("Crimson Wars web renderer enabled."));
+    UE_LOG(LogTemp, Display, TEXT("Crimson Wars native run renderer stopped."));
 }
 
 void ACWNativePlayerPawn::ApplyNativeRendererWidgetVisibility()

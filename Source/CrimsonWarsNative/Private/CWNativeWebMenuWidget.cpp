@@ -128,7 +128,7 @@ FString UCWNativeWebMenuWidget::BuildMenuUrl() const
         BaseUrl.LeftChopInline(1);
     }
 
-    return BaseUrl + TEXT("/play?tab=characters&native=ue&uev=20260512webreturn1");
+    return BaseUrl + TEXT("/play?tab=characters&native=ue&uev=20260513nativeonly1");
 }
 
 void UCWNativeWebMenuWidget::HandleUrlChanged(const FText& Text)
@@ -286,18 +286,18 @@ bool UCWNativeWebMenuWidget::ConsumeNativeRenderRequest(FString& OutRoomCode, FS
     return true;
 }
 
-void UCWNativeWebMenuWidget::RequestNativeRendererFromWeb()
+void UCWNativeWebMenuWidget::SuspendForNativeRun()
 {
-    if (!Browser)
-    {
-        return;
-    }
+    bMenuShown = false;
+    FocusRefreshSeconds = 0.0f;
+    SetVisibility(ESlateVisibility::Collapsed);
+    ApplyInputMode(false);
 
-    Browser->ExecuteJavascript(TEXT(
-        "(function(){"
-        "if(window.cwNativeRequestRenderer){window.cwNativeRequestRenderer();return;}"
-        "window.dispatchEvent(new KeyboardEvent('keydown',{code:'F10',key:'F10',bubbles:true}));"
-        "})();"));
+    if (Browser)
+    {
+        Browser->LoadURL(TEXT("about:blank"));
+        bInitialUrlLoaded = false;
+    }
 }
 
 void UCWNativeWebMenuWidget::ApplyInputMode(bool bShowMenu)
@@ -352,46 +352,4 @@ void UCWNativeWebMenuWidget::FocusBrowser()
     Browser->SetIsEnabled(true);
     Browser->SetFocus();
     Browser->SetUserFocus(PC);
-}
-
-void UCWNativeWebMenuWidget::NotifyNativeRendererActive(bool bActive)
-{
-    if (!Browser)
-    {
-        return;
-    }
-
-    Browser->ExecuteJavascript(FString::Printf(
-        TEXT("(function(active){window.cwNativeRendererActive=active;if(window.cwNativeSetRendererActive){window.cwNativeSetRendererActive(active);}else{['game','game-webgl'].forEach(function(id){var el=document.getElementById(id);if(el){el.hidden=active;el.classList.toggle('hidden',active);el.style.visibility=active?'hidden':'visible';el.style.opacity=active?'0':'1';}});}})(%s);if(!%s&&window.cwNativeRestoreWebRunSurface){window.cwNativeRestoreWebRunSurface();}"),
-        bActive ? TEXT("true") : TEXT("false"),
-        bActive ? TEXT("true") : TEXT("false")));
-}
-
-void UCWNativeWebMenuWidget::RestoreWebRunFocus()
-{
-    if (!Browser)
-    {
-        return;
-    }
-
-    Browser->ExecuteJavascript(TEXT(
-        "window.cwNativeRendererActive=false;"
-        "(function(){"
-        "function show(id){var el=document.getElementById(id);if(!el)return;el.classList.remove('hidden');el.hidden=false;el.style.visibility='visible';el.style.opacity='1';}"
-        "var overlay=document.getElementById('join-overlay');"
-        "var hasRun=!!((window.cwGame||window.game||{}).state);"
-        "if(overlay&&hasRun){overlay.style.display='none';overlay.classList.remove('death-mode','death-cinematic-active','death-rewards-visible');}"
-        "show('game');show('game-webgl');"
-        "var hud=document.getElementById('hud');if(hud){hud.classList.remove('menu-hidden');}"
-        "['top-center-hud','bottom-hud','minimap-wrap','chat-wrap','fps-corner'].forEach(show);"
-        "document.body&&document.body.classList.remove('levelup-open');"
-        "if(window.cwNativeRestoreWebRunSurface){window.cwNativeRestoreWebRunSurface();}"
-        "else if(window.cwNativeFocusGameSurface){window.cwNativeFocusGameSurface();}"
-        "window.dispatchEvent(new Event('resize'));"
-        "setTimeout(function(){"
-        "var game=document.getElementById('game');"
-        "if(game){game.tabIndex=0;game.focus({preventScroll:true});}"
-        "window.focus();"
-        "},0);"
-        "})();"));
 }
