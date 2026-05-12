@@ -4,6 +4,7 @@
 #include "HttpModule.h"
 #include "IWebSocket.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -462,9 +463,10 @@ void UCWNativeGameInstance::ApplyRuntimeDefaults()
         NativeBootstrapPath = TEXT("/api/native/bootstrap");
     }
 
-    if (WebAssetsRoot.IsEmpty())
+    const FString PackagedAssetsRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectContentDir(), TEXT("CrimsonWars/RawAssets")));
+    if (WebAssetsRoot.IsEmpty() || !FPaths::DirectoryExists(WebAssetsRoot))
     {
-        WebAssetsRoot = TEXT("C:/Projects/crimson-wars-native/Content/CrimsonWars/RawAssets");
+        WebAssetsRoot = PackagedAssetsRoot;
     }
 
     if (DefaultPlayerName.IsEmpty())

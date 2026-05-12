@@ -38,6 +38,8 @@ public:
     bool UseNativeQuickSlotHotkey(int32 Hotkey);
     void SetNativeKeyState(const FKey& Key, bool bIsDown);
     void SetNativeMouseButtonState(const FKey& Key, bool bIsDown);
+    void SetNativeTouchMoveVector(const FVector2D& MoveVector, bool bIsActive);
+    void SetNativeTouchAimVector(const FVector2D& AimVector, bool bIsActive);
     void UpdateNativeCursorScreenPosition(const FVector2D& ScreenPosition);
     bool GetNativeCursorScreenPosition(FVector2D& OutScreenPosition) const;
     void UpdateNativeCursorViewportPosition(const FVector2D& LocalPosition, const FVector2D& LocalViewportSize);
@@ -112,6 +114,11 @@ private:
     bool bNativeSDown = false;
     bool bNativeDDown = false;
     bool bNativeLeftMouseDown = false;
+    bool bNativeTouchMoveActive = false;
+    bool bNativeTouchShooting = false;
+    bool bHasNativeTouchAimVector = false;
+    FVector2D NativeTouchMoveVector = FVector2D::ZeroVector;
+    FVector2D NativeTouchAimVector = FVector2D::ZeroVector;
     bool bHasNativeCursorScreenPosition = false;
     bool bHasNativeCursorViewportPosition = false;
     FVector2D NativeCursorScreenPosition = FVector2D::ZeroVector;

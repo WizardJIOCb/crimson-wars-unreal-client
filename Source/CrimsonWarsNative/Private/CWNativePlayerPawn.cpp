@@ -865,6 +865,42 @@ void ACWNativePlayerPawn::SetNativeMouseButtonState(const FKey& Key, bool bIsDow
     }
 }
 
+void ACWNativePlayerPawn::SetNativeTouchMoveVector(const FVector2D& MoveVector, bool bIsActive)
+{
+    bNativeTouchMoveActive = bIsActive;
+    NativeTouchMoveVector = bIsActive ? MoveVector.GetClampedToMaxSize(1.0f) : FVector2D::ZeroVector;
+    RefreshNativeMovementFromKeys();
+
+    if (IsNativeRunInputActive())
+    {
+        SendNativeRunInput(false);
+        InputAccumulator = 0.0f;
+    }
+}
+
+void ACWNativePlayerPawn::SetNativeTouchAimVector(const FVector2D& AimVector, bool bIsActive)
+{
+    bNativeTouchShooting = bIsActive;
+    if (bIsActive && !AimVector.IsNearlyZero(0.01f))
+    {
+        NativeTouchAimVector = AimVector.GetSafeNormal();
+        bHasNativeTouchAimVector = true;
+    }
+    else if (!bIsActive)
+    {
+        NativeTouchAimVector = FVector2D::ZeroVector;
+        bHasNativeTouchAimVector = false;
+    }
+
+    RefreshNativeMovementFromKeys();
+
+    if (IsNativeRunInputActive())
+    {
+        SendNativeRunInput(false);
+        InputAccumulator = 0.0f;
+    }
+}
+
 void ACWNativePlayerPawn::UpdateNativeCursorScreenPosition(const FVector2D& ScreenPosition)
 {
     bool bWasDifferent = !bHasNativeCursorScreenPosition || FVector2D::DistSquared(NativeCursorScreenPosition, ScreenPosition) > 0.25f;
@@ -981,9 +1017,13 @@ void ACWNativePlayerPawn::RefreshNativeMovementFromKeys()
     const bool bDDown = bNativeDDown || (PC && PC->IsInputKeyDown(EKeys::D));
     const bool bLeftMouseDown = bNativeLeftMouseDown || (PC && PC->IsInputKeyDown(EKeys::LeftMouseButton));
 
-    MoveForwardValue = (bWDown ? 1.0f : 0.0f) + (bSDown ? -1.0f : 0.0f);
-    MoveRightValue = (bDDown ? 1.0f : 0.0f) + (bADown ? -1.0f : 0.0f);
-    bShooting = bLeftMouseDown;
+    const FVector2D KeyMove(
+        (bDDown ? 1.0f : 0.0f) + (bADown ? -1.0f : 0.0f),
+        (bWDown ? 1.0f : 0.0f) + (bSDown ? -1.0f : 0.0f));
+    const FVector2D Move = bNativeTouchMoveActive ? NativeTouchMoveVector : KeyMove.GetClampedToMaxSize(1.0f);
+    MoveRightValue = Move.X;
+    MoveForwardValue = Move.Y;
+    bShooting = bLeftMouseDown || bNativeTouchShooting;
 }
 
 void ACWNativePlayerPawn::ResetNativeInputState()
@@ -993,6 +1033,11 @@ void ACWNativePlayerPawn::ResetNativeInputState()
     bNativeSDown = false;
     bNativeDDown = false;
     bNativeLeftMouseDown = false;
+    bNativeTouchMoveActive = false;
+    bNativeTouchShooting = false;
+    bHasNativeTouchAimVector = false;
+    NativeTouchMoveVector = FVector2D::ZeroVector;
+    NativeTouchAimVector = FVector2D::ZeroVector;
     MoveForwardValue = 0.0f;
     MoveRightValue = 0.0f;
     bShooting = false;
@@ -1295,6 +1340,18 @@ FVector ACWNativePlayerPawn::ResolveAimWorld() const
         }
         return SelectedPlayer;
     };
+
+    if (bNativeTouchShooting && bHasNativeTouchAimVector && !NativeTouchAimVector.IsNearlyZero(0.01f))
+    {
+        if (const FCWPlayerSnapshot* SelectedPlayer = FindAuthoritativePlayer())
+        {
+            constexpr float TouchAimDistance = 760.0f;
+            return FVector(
+                SelectedPlayer->X + NativeTouchAimVector.X * TouchAimDistance,
+                SelectedPlayer->Y + NativeTouchAimVector.Y * TouchAimDistance,
+                0.0f);
+        }
+    }
 
     auto CursorVectorToServerAim = [&](const FVector2D& LocalMouse, const FVector2D& LocalViewportSize, FVector2D& OutAimWorld) -> bool
     {

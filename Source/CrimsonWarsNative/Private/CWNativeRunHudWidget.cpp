@@ -81,6 +81,45 @@ namespace CWHud
             Thickness);
     }
 
+    void DrawCircle(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Center, float Radius, const FLinearColor& Color, float Thickness, int32 Segments = 40)
+    {
+        TArray<FVector2D> Points;
+        const int32 Count = FMath::Clamp(Segments, 12, 72);
+        Points.Reserve(Count + 1);
+        for (int32 I = 0; I <= Count; ++I)
+        {
+            const float Angle = (static_cast<float>(I) / static_cast<float>(Count)) * UE_TWO_PI;
+            Points.Add(Center + FVector2D(FMath::Cos(Angle), FMath::Sin(Angle)) * Radius);
+        }
+        FSlateDrawElement::MakeLines(
+            OutDrawElements,
+            LayerId,
+            Geometry.ToPaintGeometry(),
+            Points,
+            ESlateDrawEffect::None,
+            Color,
+            true,
+            Thickness);
+    }
+
+    void DrawDisc(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Center, float Radius, const FLinearColor& Color, int32 Slices = 18)
+    {
+        const int32 Count = FMath::Clamp(Slices, 8, 28);
+        const float Step = (Radius * 2.0f) / static_cast<float>(Count);
+        for (int32 I = 0; I <= Count; ++I)
+        {
+            const float Y = -Radius + Step * I;
+            const float HalfWidth = FMath::Sqrt(FMath::Max(0.0f, Radius * Radius - Y * Y));
+            DrawBox(
+                OutDrawElements,
+                Geometry,
+                LayerId,
+                Center + FVector2D(-HalfWidth, Y - Step * 0.5f),
+                FVector2D(HalfWidth * 2.0f, Step),
+                Color);
+        }
+    }
+
     void DrawText(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Position, const FString& Text, float Size, const FLinearColor& Color, bool bBold = false)
     {
         const FSlateFontInfo Info = Font(Size, bBold);
@@ -492,6 +531,93 @@ FReply UCWNativeRunHudWidget::NativeOnMouseMove(const FGeometry& InGeometry, con
     return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
+FReply UCWNativeRunHudWidget::NativeOnTouchStarted(const FGeometry& InGeometry, const FPointerEvent& InTouchEvent)
+{
+    ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    if (!Pawn)
+    {
+        return Super::NativeOnTouchStarted(InGeometry, InTouchEvent);
+    }
+
+    const FVector2D ViewportSize = InGeometry.GetLocalSize();
+    const FVector2D LocalTouch = InGeometry.AbsoluteToLocal(InTouchEvent.GetScreenSpacePosition());
+    const int32 PointerIndex = InTouchEvent.GetPointerIndex();
+    Pawn->UpdateNativeCursorScreenPosition(InTouchEvent.GetScreenSpacePosition());
+    Pawn->UpdateNativeCursorViewportPosition(LocalTouch, ViewportSize);
+
+    if (Pawn->HandleNativeHudClickAtViewportPosition(LocalTouch, ViewportSize))
+    {
+        return FReply::Handled();
+    }
+
+    if (!Pawn->IsNativeRunInputActive())
+    {
+        return FReply::Handled();
+    }
+
+    if (LocalTouch.X >= ViewportSize.X * 0.5f && MoveTouchPointer == INDEX_NONE)
+    {
+        MoveTouchPointer = PointerIndex;
+        MoveStickCenter = GetMovementStickCenter(ViewportSize);
+        MoveStickThumb = ClampStickThumb(MoveStickCenter, LocalTouch, GetTouchStickRadius(ViewportSize));
+        ApplyMovementTouch(Pawn, ViewportSize);
+        return FReply::Handled();
+    }
+
+    if (LocalTouch.X < ViewportSize.X * 0.5f && ShootTouchPointer == INDEX_NONE)
+    {
+        ShootTouchPointer = PointerIndex;
+        ShootStickCenter = LocalTouch;
+        ShootStickThumb = LocalTouch;
+        ApplyShootingTouch(Pawn, ViewportSize);
+        return FReply::Handled();
+    }
+
+    return FReply::Handled();
+}
+
+FReply UCWNativeRunHudWidget::NativeOnTouchMoved(const FGeometry& InGeometry, const FPointerEvent& InTouchEvent)
+{
+    ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    if (!Pawn)
+    {
+        return Super::NativeOnTouchMoved(InGeometry, InTouchEvent);
+    }
+
+    const FVector2D ViewportSize = InGeometry.GetLocalSize();
+    const FVector2D LocalTouch = InGeometry.AbsoluteToLocal(InTouchEvent.GetScreenSpacePosition());
+    const int32 PointerIndex = InTouchEvent.GetPointerIndex();
+    Pawn->UpdateNativeCursorScreenPosition(InTouchEvent.GetScreenSpacePosition());
+    Pawn->UpdateNativeCursorViewportPosition(LocalTouch, ViewportSize);
+
+    if (PointerIndex == MoveTouchPointer)
+    {
+        MoveStickThumb = ClampStickThumb(MoveStickCenter, LocalTouch, GetTouchStickRadius(ViewportSize));
+        ApplyMovementTouch(Pawn, ViewportSize);
+        return FReply::Handled();
+    }
+
+    if (PointerIndex == ShootTouchPointer)
+    {
+        ShootStickThumb = ClampStickThumb(ShootStickCenter, LocalTouch, GetTouchStickRadius(ViewportSize));
+        ApplyShootingTouch(Pawn, ViewportSize);
+        return FReply::Handled();
+    }
+
+    return FReply::Handled();
+}
+
+FReply UCWNativeRunHudWidget::NativeOnTouchEnded(const FGeometry& InGeometry, const FPointerEvent& InTouchEvent)
+{
+    if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
+    {
+        ReleaseTouchPointer(Pawn, InTouchEvent.GetPointerIndex());
+        return FReply::Handled();
+    }
+
+    return Super::NativeOnTouchEnded(InGeometry, InTouchEvent);
+}
+
 FReply UCWNativeRunHudWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
     if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
@@ -514,6 +640,100 @@ FReply UCWNativeRunHudWidget::NativeOnKeyChar(const FGeometry& InGeometry, const
         }
     }
     return Super::NativeOnKeyChar(InGeometry, InCharacterEvent);
+}
+
+FVector2D UCWNativeRunHudWidget::GetMovementStickCenter(const FVector2D& ViewportSize) const
+{
+    const float Radius = GetTouchStickRadius(ViewportSize);
+    return FVector2D(
+        FMath::Max(Radius + 28.0f, ViewportSize.X - Radius - 58.0f),
+        FMath::Clamp(ViewportSize.Y - Radius - 112.0f, Radius + 70.0f, ViewportSize.Y - Radius - 38.0f));
+}
+
+float UCWNativeRunHudWidget::GetTouchStickRadius(const FVector2D& ViewportSize) const
+{
+    return FMath::Clamp(ViewportSize.Y * 0.085f, 54.0f, 82.0f);
+}
+
+FVector2D UCWNativeRunHudWidget::ClampStickThumb(const FVector2D& Center, const FVector2D& Position, float Radius) const
+{
+    const FVector2D Delta = Position - Center;
+    if (Delta.SizeSquared() <= Radius * Radius)
+    {
+        return Position;
+    }
+    return Center + Delta.GetSafeNormal() * Radius;
+}
+
+FVector2D UCWNativeRunHudWidget::GetStickVector(const FVector2D& Center, const FVector2D& Thumb, float Radius, bool bInvertY) const
+{
+    if (Radius <= 1.0f)
+    {
+        return FVector2D::ZeroVector;
+    }
+
+    FVector2D Vector = (Thumb - Center) / Radius;
+    Vector = Vector.GetClampedToMaxSize(1.0f);
+    if (bInvertY)
+    {
+        Vector.Y *= -1.0f;
+    }
+    if (Vector.SizeSquared() < 0.0144f)
+    {
+        return FVector2D::ZeroVector;
+    }
+    return Vector;
+}
+
+bool UCWNativeRunHudWidget::ApplyMovementTouch(ACWNativePlayerPawn* Pawn, const FVector2D& ViewportSize)
+{
+    if (!Pawn || MoveTouchPointer == INDEX_NONE)
+    {
+        return false;
+    }
+
+    const FVector2D MoveVector = GetStickVector(MoveStickCenter, MoveStickThumb, GetTouchStickRadius(ViewportSize), true);
+    Pawn->SetNativeTouchMoveVector(MoveVector, true);
+    return true;
+}
+
+bool UCWNativeRunHudWidget::ApplyShootingTouch(ACWNativePlayerPawn* Pawn, const FVector2D& ViewportSize)
+{
+    if (!Pawn || ShootTouchPointer == INDEX_NONE)
+    {
+        return false;
+    }
+
+    FVector2D AimVector = GetStickVector(ShootStickCenter, ShootStickThumb, GetTouchStickRadius(ViewportSize), false);
+    if (AimVector.IsNearlyZero(0.01f))
+    {
+        AimVector = (ShootStickCenter - ViewportSize * 0.5f).GetSafeNormal();
+    }
+    Pawn->SetNativeTouchAimVector(AimVector, true);
+    return true;
+}
+
+void UCWNativeRunHudWidget::ReleaseTouchPointer(ACWNativePlayerPawn* Pawn, int32 PointerIndex)
+{
+    if (!Pawn)
+    {
+        return;
+    }
+
+    if (PointerIndex == MoveTouchPointer)
+    {
+        MoveTouchPointer = INDEX_NONE;
+        MoveStickThumb = MoveStickCenter;
+        Pawn->SetNativeTouchMoveVector(FVector2D::ZeroVector, false);
+    }
+
+    if (PointerIndex == ShootTouchPointer)
+    {
+        ShootTouchPointer = INDEX_NONE;
+        ShootStickCenter = FVector2D::ZeroVector;
+        ShootStickThumb = FVector2D::ZeroVector;
+        Pawn->SetNativeTouchAimVector(FVector2D::ZeroVector, false);
+    }
 }
 
 void UCWNativeRunHudWidget::BuildHud()
@@ -940,6 +1160,36 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
     const FVector2D StatsButtonPos(Size.X - 82.0f, Size.Y - 38.0f);
     DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, StatsButtonPos, FVector2D(64.0f, 30.0f), FLinearColor(0.018f, 0.030f, 0.048f, 0.88f), FLinearColor(0.88f, 0.95f, 1.0f, 0.18f));
     DrawText(OutDrawElements, AllottedGeometry, TextLayer, StatsButtonPos + FVector2D(17.0f, 8.0f), TEXT("Stats"), 11.0f, FLinearColor(0.88f, 0.94f, 1.0f, 0.96f), true);
+
+#if PLATFORM_ANDROID || PLATFORM_IOS
+    const bool bMobileTouchControls = true;
+#else
+    const bool bMobileTouchControls = false;
+#endif
+    if (Pawn && Pawn->IsNativeRunInputActive() && (bMobileTouchControls || MoveTouchPointer != INDEX_NONE || ShootTouchPointer != INDEX_NONE))
+    {
+        const float StickRadius = GetTouchStickRadius(Size);
+        auto DrawVirtualStick = [&](const FVector2D& Center, const FVector2D& Thumb, const FString& Label, const FLinearColor& Accent, bool bActive)
+        {
+            const float BaseAlpha = bActive ? 0.28f : 0.14f;
+            DrawDisc(OutDrawElements, AllottedGeometry, PanelLayer + 4, Center, StickRadius, FLinearColor(0.006f, 0.020f, 0.034f, BaseAlpha), 18);
+            DrawCircle(OutDrawElements, AllottedGeometry, PanelLayer + 6, Center, StickRadius, FLinearColor(Accent.R, Accent.G, Accent.B, bActive ? 0.74f : 0.34f), bActive ? 2.8f : 1.8f, 42);
+            DrawCircle(OutDrawElements, AllottedGeometry, PanelLayer + 6, Center, StickRadius * 0.55f, FLinearColor(Accent.R, Accent.G, Accent.B, bActive ? 0.40f : 0.18f), 1.2f, 34);
+            DrawLine(OutDrawElements, AllottedGeometry, PanelLayer + 7, Center, Thumb, FLinearColor(Accent.R, Accent.G, Accent.B, bActive ? 0.52f : 0.18f), bActive ? 3.0f : 1.4f);
+            DrawDisc(OutDrawElements, AllottedGeometry, PanelLayer + 8, Thumb, StickRadius * 0.30f, FLinearColor(Accent.R, Accent.G, Accent.B, bActive ? 0.38f : 0.20f), 14);
+            DrawCircle(OutDrawElements, AllottedGeometry, PanelLayer + 10, Thumb, StickRadius * 0.30f, FLinearColor(0.86f, 0.98f, 1.0f, bActive ? 0.86f : 0.42f), 2.0f, 28);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer, Center + FVector2D(-StickRadius * 0.36f, StickRadius + 9.0f), Label, 10.0f, FLinearColor(0.82f, 0.96f, 1.0f, bActive ? 0.82f : 0.42f), true);
+        };
+
+        const FVector2D MoveCenter = MoveTouchPointer != INDEX_NONE ? MoveStickCenter : GetMovementStickCenter(Size);
+        const FVector2D MoveThumb = MoveTouchPointer != INDEX_NONE ? MoveStickThumb : MoveCenter;
+        DrawVirtualStick(MoveCenter, MoveThumb, TEXT("MOVE"), FLinearColor(0.16f, 0.92f, 1.0f, 1.0f), MoveTouchPointer != INDEX_NONE);
+
+        if (ShootTouchPointer != INDEX_NONE)
+        {
+            DrawVirtualStick(ShootStickCenter, ShootStickThumb, TEXT("FIRE"), FLinearColor(1.0f, 0.38f, 0.24f, 1.0f), true);
+        }
+    }
 
     if (Pawn && Pawn->IsNativePlayersPanelOpen())
     {
