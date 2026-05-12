@@ -240,6 +240,7 @@ struct FCWNativeBootstrapSnapshot
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeStateDelegate, const FCWRoomSnapshot&);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCWNativeTextDelegate, const FString&, const FString&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeBootstrapDelegate, const FCWNativeBootstrapSnapshot&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeSkillFxDelegate, const FCWSkillFxEvent&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeMeleeFxDelegate, const FCWMeleeFxEvent&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeWorldFxDelegate, const FCWWorldFxEvent&);
 
@@ -351,6 +352,7 @@ public:
     FCWNativeStateDelegate OnStateReceived;
     FCWNativeTextDelegate OnTextMessage;
     FCWNativeBootstrapDelegate OnBootstrapReceived;
+    FCWNativeSkillFxDelegate OnSkillFxReceived;
     FCWNativeMeleeFxDelegate OnMeleeFxReceived;
     FCWNativeWorldFxDelegate OnWorldFxReceived;
 

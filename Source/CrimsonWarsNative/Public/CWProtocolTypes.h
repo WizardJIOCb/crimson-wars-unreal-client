@@ -613,6 +613,90 @@ struct FCWNativeFxProfile
 };
 
 USTRUCT(BlueprintType)
+struct FCWSkillFxTarget
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString Id;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString Kind = TEXT("enemy");
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float X = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float Y = 0.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FCWSkillFxEvent
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString Id;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString PlayerId;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString PlayerName;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString HeroId;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString SkillId;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString SkillName;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString CastType;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString FxKey;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString Color;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    FString SecondaryColor;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    int32 Level = 1;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float X = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float Y = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float AimX = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float AimY = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float Radius = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    float Damage = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    int32 HitCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    int32 ProjectileCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars|FX")
+    TArray<FCWSkillFxTarget> Targets;
+};
+
+USTRUCT(BlueprintType)
 struct FCWMeleeFxEvent
 {
     GENERATED_BODY()
@@ -983,6 +1067,7 @@ class CRIMSONWARSNATIVE_API FCWProtocolParser
 {
 public:
     static bool ParseStatePayload(const TSharedPtr<FJsonObject>& Payload, FCWRoomSnapshot& OutState);
+    static bool ParseSkillFxEvent(const TSharedPtr<FJsonObject>& EventObj, FCWSkillFxEvent& OutEvent);
     static bool ParseMeleeFxEvent(const TSharedPtr<FJsonObject>& EventObj, FCWMeleeFxEvent& OutEvent);
     static bool ParseWorldFxEvent(const TSharedPtr<FJsonObject>& EventObj, FCWWorldFxEvent& OutEvent);
 

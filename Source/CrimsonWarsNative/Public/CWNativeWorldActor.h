@@ -40,6 +40,7 @@ public:
 private:
     void HandleStateReceived(const FCWRoomSnapshot& State);
     void HandleBootstrapReceived(const FCWNativeBootstrapSnapshot& Bootstrap);
+    void HandleSkillFxReceived(const FCWSkillFxEvent& Event);
     void HandleMeleeFxReceived(const FCWMeleeFxEvent& Event);
     void HandleWorldFxReceived(const FCWWorldFxEvent& Event);
     void RenderState(const FCWRoomSnapshot& State);
@@ -61,6 +62,7 @@ private:
     void SpawnObjectImpactFx(const FCWObjectImpactEventSnapshot& Event);
     void SpawnXpSurgePullFx(const FCWWorldFxEvent& Event);
     void SpawnGenericWorldFx(const FCWWorldFxEvent& Event);
+    void SpawnSkillEventFx(const FCWSkillFxEvent& Event);
     void SpawnMeleeStyleFx(const FCWMeleeFxEvent& Event);
     void AddRocketTrailFx(const FCWBulletSnapshot& Bullet);
     const FCWNativeFxProfile* FindFxProfile(const FString& FxKey) const;
@@ -152,6 +154,7 @@ private:
 
     FDelegateHandle StateDelegateHandle;
     FDelegateHandle BootstrapDelegateHandle;
+    FDelegateHandle SkillFxDelegateHandle;
     FDelegateHandle MeleeFxDelegateHandle;
     FDelegateHandle WorldFxDelegateHandle;
     FVector2D LastGridSize = FVector2D::ZeroVector;
@@ -159,6 +162,7 @@ private:
     FCWRoomSnapshot PreviousState;
     bool bHasPreviousState = false;
     TMap<FString, FCWNativeFxProfile> FxProfiles;
+    TSet<FString> SeenSkillFxEventIds;
     TSet<FString> SeenShotEventIds;
     TSet<FString> SeenObjectImpactEventIds;
     TMap<FString, float> PreviousSkillCooldowns;

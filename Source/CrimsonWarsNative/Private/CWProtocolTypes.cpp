@@ -862,6 +862,56 @@ FCWMapObjectSnapshot FCWProtocolParser::ParseMapObjectObject(const TSharedPtr<FJ
     return MapObject;
 }
 
+bool FCWProtocolParser::ParseSkillFxEvent(const TSharedPtr<FJsonObject>& EventObj, FCWSkillFxEvent& OutEvent)
+{
+    if (!EventObj.IsValid())
+    {
+        return false;
+    }
+
+    OutEvent = FCWSkillFxEvent();
+    OutEvent.Id = CWJson::GetString(EventObj, TEXT("id"));
+    OutEvent.PlayerId = CWJson::GetString(EventObj, TEXT("playerId"));
+    OutEvent.PlayerName = CWJson::GetString(EventObj, TEXT("playerName"));
+    OutEvent.HeroId = CWJson::GetString(EventObj, TEXT("heroId"));
+    OutEvent.SkillId = CWJson::GetString(EventObj, TEXT("skillId"));
+    OutEvent.SkillName = CWJson::GetString(EventObj, TEXT("skillName"), OutEvent.SkillId);
+    OutEvent.CastType = CWJson::GetString(EventObj, TEXT("castType"), OutEvent.SkillId);
+    OutEvent.FxKey = ReadFxKey(EventObj);
+    OutEvent.Color = CWJson::GetString(EventObj, TEXT("color"));
+    OutEvent.SecondaryColor = CWJson::GetString(EventObj, TEXT("secondaryColor"));
+    OutEvent.Level = FMath::Max(1, static_cast<int32>(CWJson::GetNumber(EventObj, TEXT("level"), 1.0)));
+    OutEvent.X = static_cast<float>(CWJson::GetNumber(EventObj, TEXT("x")));
+    OutEvent.Y = static_cast<float>(CWJson::GetNumber(EventObj, TEXT("y")));
+    OutEvent.AimX = static_cast<float>(CWJson::GetNumber(EventObj, TEXT("aimX"), OutEvent.X));
+    OutEvent.AimY = static_cast<float>(CWJson::GetNumber(EventObj, TEXT("aimY"), OutEvent.Y));
+    OutEvent.Radius = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(EventObj, TEXT("radius"))));
+    OutEvent.Damage = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(EventObj, TEXT("damage"))));
+    OutEvent.HitCount = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(EventObj, TEXT("hitCount"), CWJson::GetNumber(EventObj, TEXT("targetCount")))));
+    OutEvent.ProjectileCount = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(EventObj, TEXT("projectileCount"))));
+
+    if (const TArray<TSharedPtr<FJsonValue>>* Targets = CWJson::GetArray(EventObj, TEXT("targets")))
+    {
+        OutEvent.Targets.Reserve(Targets->Num());
+        for (const TSharedPtr<FJsonValue>& Value : *Targets)
+        {
+            if (!Value.IsValid() || Value->Type != EJson::Object)
+            {
+                continue;
+            }
+            const TSharedPtr<FJsonObject> TargetObj = Value->AsObject();
+            FCWSkillFxTarget Target;
+            Target.Id = CWJson::GetString(TargetObj, TEXT("id"));
+            Target.Kind = CWJson::GetString(TargetObj, TEXT("kind"), TEXT("enemy"));
+            Target.X = static_cast<float>(CWJson::GetNumber(TargetObj, TEXT("x")));
+            Target.Y = static_cast<float>(CWJson::GetNumber(TargetObj, TEXT("y")));
+            OutEvent.Targets.Add(Target);
+        }
+    }
+
+    return !OutEvent.PlayerId.IsEmpty() || !OutEvent.SkillId.IsEmpty() || !OutEvent.CastType.IsEmpty();
+}
+
 bool FCWProtocolParser::ParseMeleeFxEvent(const TSharedPtr<FJsonObject>& EventObj, FCWMeleeFxEvent& OutEvent)
 {
     if (!EventObj.IsValid())

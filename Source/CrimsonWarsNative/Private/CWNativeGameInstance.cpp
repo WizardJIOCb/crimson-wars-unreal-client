@@ -822,6 +822,16 @@ void UCWNativeGameInstance::HandleMessage(const FString& Message)
         return;
     }
 
+    if (Type == TEXT("skillFx"))
+    {
+        FCWSkillFxEvent Event;
+        if (FCWProtocolParser::ParseSkillFxEvent(CWNativeJson::GetObject(Root, TEXT("event")), Event))
+        {
+            OnSkillFxReceived.Broadcast(Event);
+        }
+        return;
+    }
+
     if (Type == TEXT("meleeFx"))
     {
         FCWMeleeFxEvent Event;

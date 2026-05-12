@@ -139,6 +139,7 @@ void ACWNativeWorldActor::BeginPlay()
     {
         StateDelegateHandle = GI->OnStateReceived.AddUObject(this, &ACWNativeWorldActor::HandleStateReceived);
         BootstrapDelegateHandle = GI->OnBootstrapReceived.AddUObject(this, &ACWNativeWorldActor::HandleBootstrapReceived);
+        SkillFxDelegateHandle = GI->OnSkillFxReceived.AddUObject(this, &ACWNativeWorldActor::HandleSkillFxReceived);
         MeleeFxDelegateHandle = GI->OnMeleeFxReceived.AddUObject(this, &ACWNativeWorldActor::HandleMeleeFxReceived);
         WorldFxDelegateHandle = GI->OnWorldFxReceived.AddUObject(this, &ACWNativeWorldActor::HandleWorldFxReceived);
         HandleBootstrapReceived(GI->Bootstrap);
@@ -159,6 +160,11 @@ void ACWNativeWorldActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         {
             GI->OnBootstrapReceived.Remove(BootstrapDelegateHandle);
             BootstrapDelegateHandle.Reset();
+        }
+        if (SkillFxDelegateHandle.IsValid())
+        {
+            GI->OnSkillFxReceived.Remove(SkillFxDelegateHandle);
+            SkillFxDelegateHandle.Reset();
         }
         if (MeleeFxDelegateHandle.IsValid())
         {
@@ -222,6 +228,23 @@ void ACWNativeWorldActor::HandleStateReceived(const FCWRoomSnapshot& State)
 void ACWNativeWorldActor::HandleBootstrapReceived(const FCWNativeBootstrapSnapshot& Bootstrap)
 {
     FxProfiles = Bootstrap.FxProfiles;
+}
+
+void ACWNativeWorldActor::HandleSkillFxReceived(const FCWSkillFxEvent& Event)
+{
+    if (!Event.Id.IsEmpty())
+    {
+        if (SeenSkillFxEventIds.Contains(Event.Id))
+        {
+            return;
+        }
+        SeenSkillFxEventIds.Add(Event.Id);
+        if (SeenSkillFxEventIds.Num() > 512)
+        {
+            SeenSkillFxEventIds.Reset();
+        }
+    }
+    SpawnSkillEventFx(Event);
 }
 
 void ACWNativeWorldActor::HandleMeleeFxReceived(const FCWMeleeFxEvent& Event)
@@ -680,6 +703,105 @@ void ACWNativeWorldActor::SpawnGenericWorldFx(const FCWWorldFxEvent& Event)
     {
         SpawnBeamFx(Origin + FVector(0.0f, 0.0f, 680.0f), Origin, 22.0f, Secondary, 0.28f, 6.5f);
     }
+}
+
+void ACWNativeWorldActor::SpawnSkillEventFx(const FCWSkillFxEvent& Event)
+{
+    const FCWNativeFxProfile* Profile = FindFxProfile(Event.FxKey);
+    const FString CastType = Event.CastType.IsEmpty() ? Event.SkillId : Event.CastType;
+    const FLinearColor Primary = ResolveFxColor(Profile ? Profile->PrimaryColor : Event.Color, FLinearColor(0.45f, 0.82f, 1.0f, 1.0f));
+    const FLinearColor Secondary = ResolveFxColor(Profile ? Profile->SecondaryColor : Event.SecondaryColor, FLinearColor(0.96f, 0.98f, 1.0f, 1.0f));
+    const FVector Origin = MakeWorldLocation(Event.X, Event.Y, GroundFxZ + 34.0f);
+    const float Radius = FMath::Clamp(Event.Radius > 0.0f ? Event.Radius : (Profile ? Profile->Radius : 180.0f), 72.0f, 760.0f);
+    const FVector AimDelta(Event.AimX - Event.X, Event.AimY - Event.Y, 0.0f);
+    const float AimAngle = AimDelta.SizeSquared2D() > 1.0f ? FMath::Atan2(AimDelta.Y, AimDelta.X) : 0.0f;
+
+    auto SpawnTargetMarkers = [&](float BeamWidth, float BurstRadius, float Life)
+    {
+        for (const FCWSkillFxTarget& Target : Event.Targets)
+        {
+            const FVector TargetLocation = MakeWorldLocation(Target.X, Target.Y, ProjectileFxZ + 18.0f);
+            SpawnBeamFx(Origin + FVector(0.0f, 0.0f, 34.0f), TargetLocation, BeamWidth, Primary, Life, 5.8f);
+            SpawnBurstFx(TargetLocation, BurstRadius, Secondary, Life * 1.15f, 9);
+        }
+    };
+
+    if (CastType.Contains(TEXT("shockwave"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("stomp"), ESearchCase::IgnoreCase))
+    {
+        SpawnBurstFx(Origin, Radius * 0.82f, Primary, 0.9f, 32);
+        SpawnRingFx(Origin + FVector(0.0f, 0.0f, 8.0f), Radius * 1.22f, Secondary, 1.05f, 7.0f, 5.0f);
+        SpawnRingFx(Origin + FVector(0.0f, 0.0f, 16.0f), Radius * 0.62f, Primary, 0.66f, 9.0f, 6.0f);
+        SpawnTargetMarkers(6.0f, 38.0f, 0.34f);
+        return;
+    }
+
+    if (CastType.Contains(TEXT("psi"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("wave"), ESearchCase::IgnoreCase))
+    {
+        SpawnBurstFx(Origin + FVector(0.0f, 0.0f, 42.0f), Radius * 0.62f, Primary, 0.86f, 28);
+        SpawnRingFx(Origin, Radius * 1.35f, Secondary, 1.1f, 6.0f, 5.2f);
+        SpawnRingFx(Origin + FVector(0.0f, 0.0f, 22.0f), Radius * 0.95f, Primary, 0.82f, 5.0f, 5.4f);
+        SpawnTargetMarkers(8.0f, 46.0f, 0.42f);
+        return;
+    }
+
+    if (CastType.Contains(TEXT("chain"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("lightning"), ESearchCase::IgnoreCase))
+    {
+        FVector Previous = Origin + FVector(0.0f, 0.0f, 70.0f);
+        int32 LinkIndex = 0;
+        for (const FCWSkillFxTarget& Target : Event.Targets)
+        {
+            const FVector TargetLocation = MakeWorldLocation(Target.X, Target.Y, ProjectileFxZ + 26.0f);
+            SpawnBeamFx(Previous, TargetLocation, 11.0f, LinkIndex % 2 == 0 ? Primary : Secondary, 0.42f, 7.5f);
+            SpawnBurstFx(TargetLocation, 56.0f, LinkIndex % 2 == 0 ? Secondary : Primary, 0.48f, 10);
+            Previous = TargetLocation + FVector(0.0f, 0.0f, 18.0f);
+            ++LinkIndex;
+        }
+        SpawnBurstFx(Origin, 115.0f, Primary, 0.5f, 16);
+        return;
+    }
+
+    if (CastType.Contains(TEXT("laser"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("lance"), ESearchCase::IgnoreCase))
+    {
+        if (Event.Targets.Num() <= 0)
+        {
+            SpawnBeamFx(Origin, Origin + FVector(FMath::Cos(AimAngle), FMath::Sin(AimAngle), 0.0f) * Radius + FVector(0.0f, 0.0f, 70.0f), 18.0f, Primary, 0.38f, 7.5f);
+        }
+        for (const FCWSkillFxTarget& Target : Event.Targets)
+        {
+            const FVector TargetLocation = MakeWorldLocation(Target.X, Target.Y, ProjectileFxZ);
+            SpawnBeamFx(TargetLocation + FVector(0.0f, 0.0f, 720.0f), TargetLocation + FVector(0.0f, 0.0f, 12.0f), 22.0f, Primary, 0.36f, 8.5f);
+            SpawnBeamFx(Origin + FVector(0.0f, 0.0f, 42.0f), TargetLocation + FVector(0.0f, 0.0f, 26.0f), 9.0f, Secondary, 0.32f, 6.2f);
+            SpawnBurstFx(TargetLocation, 82.0f, Secondary, 0.46f, 12);
+        }
+        return;
+    }
+
+    if (CastType.Contains(TEXT("missile"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("rocket"), ESearchCase::IgnoreCase))
+    {
+        const int32 Count = FMath::Clamp(Event.ProjectileCount > 0 ? Event.ProjectileCount : FMath::Max(3, Event.Targets.Num()), 3, 12);
+        SpawnBurstFx(Origin, 132.0f, Primary, 0.48f, 16);
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            const float A = AimAngle + ((static_cast<float>(Index) - (Count - 1) * 0.5f) * 0.22f);
+            SpawnBeamFx(Origin, Origin + FVector(FMath::Cos(A), FMath::Sin(A), 0.0f) * 190.0f + FVector(0.0f, 0.0f, 54.0f), 13.0f, Primary, 0.44f, 5.8f);
+        }
+        SpawnTargetMarkers(5.0f, 42.0f, 0.38f);
+        return;
+    }
+
+    if (CastType.Contains(TEXT("blade"), ESearchCase::IgnoreCase) || CastType.Contains(TEXT("orbit"), ESearchCase::IgnoreCase))
+    {
+        const int32 Count = FMath::Clamp(FMath::Max(5, Event.HitCount), 5, 10);
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            SpawnArcFx(Origin, AimAngle + Index * TWO_PI / Count, FMath::Max(125.0f, Radius * 0.36f), 72.0f, 52.0f, Primary, Secondary, 0.56f, 8);
+        }
+        SpawnTargetMarkers(5.0f, 40.0f, 0.32f);
+        return;
+    }
+
+    SpawnBurstFx(Origin, FMath::Max(140.0f, Radius * 0.45f), Primary, 0.55f, 18);
+    SpawnTargetMarkers(6.0f, 38.0f, 0.34f);
 }
 
 void ACWNativeWorldActor::SpawnMeleeStyleFx(const FCWMeleeFxEvent& Event)
