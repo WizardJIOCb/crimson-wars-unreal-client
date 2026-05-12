@@ -1778,6 +1778,19 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         return FString::Printf(TEXT("explosion_%s"), *Suffix);
     };
 
+    auto MakeBlastScorchType = [&](const FString& Material) -> FString
+    {
+        const FString Suffix = NormalizeExplosionMaterial(Material);
+        return FString::Printf(TEXT("blast_scorch_%s"), *Suffix);
+    };
+
+    auto AddRocketExplosionFx = [&](const FString& Material, const FVector2D& Pos, const FVector2D& Dir, const FLinearColor& Color, float Radius)
+    {
+        const float SafeRadius = FMath::Max(130.0f, Radius);
+        AddFx(MakeBlastScorchType(Material), Pos, Dir, CWRunView::MaterialColor(Material, 0.78f), 3.2f, SafeRadius * 0.92f);
+        AddFx(MakeExplosionType(Material), Pos, Dir, Color, 1.42f, SafeRadius);
+    };
+
     TSet<FString> CurrentBulletIds;
     for (const FCWBulletSnapshot& Bullet : NextState.Bullets)
     {
@@ -1789,7 +1802,7 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         const FVector2D CurrentBulletPos(Bullet.X, Bullet.Y);
         const FVector2D* PreviousBulletPos = PreviousBulletPositions.Find(Bullet.Id);
         const bool bRocketBullet = Bullet.Kind.Equals(TEXT("rocket"), ESearchCase::IgnoreCase) || Bullet.ExplosionRadius > 1.0f;
-        if (bRocketBullet && PreviousBulletPos && FVector2D::DistSquared(*PreviousBulletPos, CurrentBulletPos) > FMath::Square(8.0f))
+        if (bRocketBullet && PreviousBulletPos && FVector2D::DistSquared(*PreviousBulletPos, CurrentBulletPos) > FMath::Square(4.0f))
         {
             FVector2D TrailDir(Bullet.Vx, Bullet.Vy);
             if (TrailDir.IsNearlyZero())
@@ -1799,7 +1812,7 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
             const FLinearColor TrailColor = Bullet.bFromEnemy
                 ? FLinearColor(1.0f, 0.22f, 0.08f, 0.86f)
                 : CWRunView::HexColor(Bullet.Color, FLinearColor(1.0f, 0.66f, 0.12f, 0.86f));
-            AddFx(TEXT("rocket_trail"), *PreviousBulletPos, TrailDir, TrailColor, 0.88f, FMath::Clamp(FVector2D::Distance(*PreviousBulletPos, CurrentBulletPos), 42.0f, 180.0f), CurrentBulletPos);
+            AddFx(TEXT("rocket_trail"), *PreviousBulletPos, TrailDir, TrailColor, 1.18f, FMath::Clamp(FVector2D::Distance(*PreviousBulletPos, CurrentBulletPos), 54.0f, 240.0f), CurrentBulletPos);
         }
         PreviousBulletPositions.Add(Bullet.Id, CurrentBulletPos);
     }
@@ -1890,7 +1903,14 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         const FVector2D Dir(Bullet.Vx, Bullet.Vy);
         const FLinearColor Color = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.22f, 0.14f, 0.9f) : CWRunView::HexColor(Bullet.Color, FLinearColor(1.0f, 0.74f, 0.18f, 0.9f));
         const bool bRocketBullet = Bullet.ExplosionRadius > 1.0f || Bullet.Kind.Equals(TEXT("rocket"), ESearchCase::IgnoreCase);
-        AddFx(bRocketBullet ? MakeExplosionType(ResolveSurfaceMaterial(Pos)) : TEXT("impact"), Pos, Dir, Color, bRocketBullet ? 1.05f : 0.25f, bRocketBullet ? FMath::Max(170.0f, Bullet.ExplosionRadius) : 22.0f);
+        if (bRocketBullet)
+        {
+            AddRocketExplosionFx(ResolveSurfaceMaterial(Pos), Pos, Dir, Color, FMath::Max(170.0f, Bullet.ExplosionRadius));
+        }
+        else
+        {
+            AddFx(TEXT("impact"), Pos, Dir, Color, 0.25f, 22.0f);
+        }
         PreviousBulletPositions.Remove(Pair.Key);
     }
 
@@ -2053,9 +2073,16 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         const FLinearColor Spark = Event.Material.Contains(TEXT("metal"), ESearchCase::IgnoreCase)
             ? FLinearColor(0.62f, 0.92f, 1.0f, 0.92f)
             : (bWood ? FLinearColor(1.0f, 0.58f, 0.22f, 0.90f) : FLinearColor(0.86f, 0.82f, 0.72f, 0.86f));
-        const FString ImpactType = bRocket ? MakeExplosionType(Event.Material) : (bMetal ? TEXT("impact_metal") : (bWood ? TEXT("impact_wood") : TEXT("impact_concrete")));
         const FVector2D ImpactDir = FVector2D(Event.DirX, Event.DirY).IsNearlyZero() ? FVector2D(1.0f, 0.0f) : FVector2D(Event.DirX, Event.DirY).GetSafeNormal();
-        AddFx(ImpactType, FVector2D(Event.X, Event.Y) - ImpactDir * (bRocket ? 34.0f : 22.0f), ImpactDir, Spark, bRocket ? 1.05f : 0.36f, bRocket ? 185.0f : 32.0f);
+        if (bRocket)
+        {
+            AddRocketExplosionFx(Event.Material, FVector2D(Event.X, Event.Y) - ImpactDir * 28.0f, ImpactDir, FLinearColor(1.0f, 0.48f, 0.08f, 0.96f), 185.0f);
+        }
+        else
+        {
+            const FString ImpactType = bMetal ? TEXT("impact_metal") : (bWood ? TEXT("impact_wood") : TEXT("impact_concrete"));
+            AddFx(ImpactType, FVector2D(Event.X, Event.Y) - ImpactDir * 22.0f, ImpactDir, Spark, 0.36f, 32.0f);
+        }
     }
     if (SeenObjectImpactEventIds.Num() > 256)
     {
@@ -3371,51 +3398,51 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
         }
         if (bRocket)
         {
-            const float RocketScale = FMath::Clamp(Scale, 0.52f, 0.96f);
-            const float BodyLength = FMath::Clamp(30.0f * RocketScale + BulletSpeed * 0.0008f, 24.0f, 40.0f);
-            const float BodyWidth = FMath::Clamp(8.6f * RocketScale, 5.4f, 9.8f);
-            const float FlameLen = FMath::Clamp(BulletSpeed * 0.045f, 96.0f, 210.0f) * (0.88f + 0.12f * Flicker);
+            const float RocketScale = FMath::Clamp(Scale, 0.48f, 0.84f);
+            const float BodyLength = FMath::Clamp(21.0f * RocketScale + BulletSpeed * 0.00045f, 17.0f, 29.0f);
+            const float BodyWidth = FMath::Clamp(6.2f * RocketScale, 3.9f, 6.8f);
+            const float FlameLen = FMath::Clamp(BulletSpeed * 0.036f, 62.0f, 142.0f) * (0.88f + 0.12f * Flicker);
             const FVector2D Nose = P + BulletDir * BodyLength * 0.46f;
             const FVector2D Engine = P - BulletDir * BodyLength * 0.44f;
             const FVector2D FlameTail = Engine - BulletDir * FlameLen;
             const FLinearColor ExhaustHot = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.16f, 0.06f, 0.92f) : FLinearColor(1.0f, 0.74f, 0.16f, 0.92f);
             const FLinearColor ExhaustCore = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.74f, 0.46f, 0.96f) : FLinearColor(1.0f, 0.96f, 0.64f, 0.96f);
 
-            for (int32 I = 0; I < 9; ++I)
+            for (int32 I = 0; I < 6; ++I)
             {
-                const float K = (static_cast<float>(I) + 1.0f) / 9.0f;
+                const float K = (static_cast<float>(I) + 1.0f) / 6.0f;
                 const float SmokeWave = FMath::Sin(Time * 10.0f + K * 9.4f);
-                const float SmokeSize = FMath::Lerp(9.0f, 34.0f, K) * RocketScale;
+                const float SmokeSize = FMath::Lerp(6.0f, 22.0f, K) * RocketScale;
                 const FVector2D SmokePos = Engine
-                    - BulletDir * FMath::Lerp(14.0f, FlameLen * 1.18f, K)
-                    + Perp * SmokeWave * FMath::Lerp(2.0f, 22.0f, K);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.65f, SmokeSize * 0.86f), FLinearColor(0.05f, 0.055f, 0.060f, 0.12f * (1.0f - K * 0.38f)));
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos + Perp * SmokeWave * 2.0f, FVector2D(SmokeSize * 0.92f, SmokeSize * 0.50f), FLinearColor(0.42f, 0.37f, 0.28f, 0.12f * (1.0f - K * 0.48f)));
+                    - BulletDir * FMath::Lerp(10.0f, FlameLen * 0.88f, K)
+                    + Perp * SmokeWave * FMath::Lerp(1.2f, 12.0f, K);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.55f, SmokeSize * 0.78f), FLinearColor(0.05f, 0.055f, 0.060f, 0.08f * (1.0f - K * 0.38f)));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos + Perp * SmokeWave * 1.5f, FVector2D(SmokeSize * 0.82f, SmokeSize * 0.42f), FLinearColor(0.48f, 0.34f, 0.20f, 0.10f * (1.0f - K * 0.48f)));
             }
 
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, Engine - BulletDir * 2.0f, FlameTail, FLinearColor(1.0f, 0.16f, 0.02f, 0.22f * Flicker), BodyWidth * 2.25f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Engine, FlameTail + Perp * FMath::Sin(Time * 17.0f) * 10.0f, FLinearColor(ExhaustHot.R, ExhaustHot.G, ExhaustHot.B, 0.76f * Flicker), BodyWidth * 1.00f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Engine + BulletDir * 1.0f, Engine - BulletDir * FlameLen * 0.54f, FLinearColor(ExhaustCore.R, ExhaustCore.G, ExhaustCore.B, 0.96f * Flicker), BodyWidth * 0.42f);
-            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 15, Engine - BulletDir * FlameLen * 0.64f, FVector2D(BodyWidth * 1.60f, BodyWidth * 0.86f), FLinearColor(1.0f, 0.42f, 0.06f, 0.38f * Flicker));
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, Engine - BulletDir * 1.0f, FlameTail, FLinearColor(1.0f, 0.12f, 0.02f, 0.20f * Flicker), BodyWidth * 2.05f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Engine, FlameTail + Perp * FMath::Sin(Time * 17.0f) * 7.0f, FLinearColor(ExhaustHot.R, ExhaustHot.G, ExhaustHot.B, 0.82f * Flicker), BodyWidth * 0.92f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Engine + BulletDir * 0.8f, Engine - BulletDir * FlameLen * 0.48f, FLinearColor(ExhaustCore.R, ExhaustCore.G, ExhaustCore.B, 0.98f * Flicker), BodyWidth * 0.34f);
+            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 15, Engine - BulletDir * FlameLen * 0.56f, FVector2D(BodyWidth * 1.35f, BodyWidth * 0.74f), FLinearColor(1.0f, 0.42f, 0.06f, 0.34f * Flicker));
 
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, Engine - BulletDir * 2.0f, Nose, FLinearColor(0.02f, 0.025f, 0.030f, 0.44f), BodyWidth + 5.0f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, Engine - BulletDir * 1.5f, Nose, FLinearColor(0.02f, 0.025f, 0.030f, 0.44f), BodyWidth + 3.4f);
             DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, Engine, Nose, FLinearColor(0.38f, 0.45f, 0.52f, 0.98f), BodyWidth);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine + Perp * BodyWidth * 0.18f, Nose - BulletDir * BodyLength * 0.16f + Perp * BodyWidth * 0.18f, FLinearColor(0.94f, 0.98f, 1.0f, 0.54f), 1.8f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine - Perp * BodyWidth * 0.24f, Nose - BulletDir * BodyLength * 0.22f - Perp * BodyWidth * 0.24f, FLinearColor(0.10f, 0.14f, 0.18f, 0.54f), 2.2f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine + Perp * BodyWidth * 0.18f, Nose - BulletDir * BodyLength * 0.16f + Perp * BodyWidth * 0.18f, FLinearColor(0.94f, 0.98f, 1.0f, 0.54f), 1.1f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, Engine - Perp * BodyWidth * 0.24f, Nose - BulletDir * BodyLength * 0.22f - Perp * BodyWidth * 0.24f, FLinearColor(0.10f, 0.14f, 0.18f, 0.54f), 1.3f);
 
             DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, Nose - BulletDir * BodyWidth * 1.05f, Nose, FLinearColor(1.0f, 0.24f, 0.10f, 0.98f), BodyWidth * 0.72f);
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 20, Nose + BulletDir * 1.5f, FVector2D(BodyWidth * 1.10f, BodyWidth * 0.72f), FLinearColor(1.0f, 0.86f, 0.46f, 0.34f * Flicker));
 
             const FVector2D FinRootA = Engine + Perp * BodyWidth * 0.45f;
             const FVector2D FinRootB = Engine - Perp * BodyWidth * 0.45f;
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootA, Engine - BulletDir * BodyWidth * 1.12f + Perp * BodyWidth * 1.28f, FLinearColor(0.88f, 0.22f, 0.10f, 0.86f), 2.8f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootB, Engine - BulletDir * BodyWidth * 1.12f - Perp * BodyWidth * 1.28f, FLinearColor(0.88f, 0.22f, 0.10f, 0.82f), 2.8f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootA, Engine - BulletDir * BodyWidth * 1.00f + Perp * BodyWidth * 1.05f, FLinearColor(0.88f, 0.22f, 0.10f, 0.86f), 1.6f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, FinRootB, Engine - BulletDir * BodyWidth * 1.00f - Perp * BodyWidth * 1.05f, FLinearColor(0.88f, 0.22f, 0.10f, 0.82f), 1.6f);
 
             for (int32 I = 0; I < 7; ++I)
             {
                 const float K = static_cast<float>(I) / 6.0f;
                 const float SparkSide = (K - 0.5f) * BodyWidth * 2.8f;
-                const float SparkBack = FMath::Lerp(14.0f, FlameLen * 0.72f, K);
+                const float SparkBack = FMath::Lerp(10.0f, FlameLen * 0.64f, K);
                 const FVector2D SparkStart = Engine - BulletDir * (SparkBack * 0.28f) + Perp * SparkSide * 0.22f;
                 const FVector2D SparkEnd = Engine - BulletDir * SparkBack + Perp * (SparkSide + FMath::Sin(Time * 21.0f + K * 12.0f) * BodyWidth * 0.55f);
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 21, SparkStart, SparkEnd, FLinearColor(1.0f, 0.82f, 0.30f, 0.28f * Flicker), I % 2 == 0 ? 1.4f : 0.9f);
@@ -3483,29 +3510,44 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             }
             const FVector2D Perp(-Dir.Y, Dir.X);
             const float TrailLen = FVector2D::Distance(P, E);
-            const float TrailPulse = 0.86f + 0.14f * FMath::Sin(CWRunView::LocalAnimTime(Fx.Radius * 0.013f) * 19.0f);
+            const float Seed = Fx.Radius * 0.041f + Fx.Position.X * 0.003f + Fx.Position.Y * 0.002f;
+            const int32 Samples = 13;
+            TArray<FVector2D> HotRibbon;
+            TArray<FVector2D> CoreRibbon;
+            HotRibbon.Reserve(Samples);
+            CoreRibbon.Reserve(Samples);
 
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, P, E, FLinearColor(1.0f, 0.18f, 0.02f, 0.12f * A), FMath::Clamp(18.0f + TrailLen * 0.035f, 16.0f, 28.0f));
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, P + Perp * FMath::Sin(T * 9.0f) * 4.0f, E, FLinearColor(C.R, C.G, C.B, 0.34f * A * TrailPulse), FMath::Clamp(7.0f + TrailLen * 0.012f, 6.0f, 13.0f));
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, FMath::Lerp(P, E, 0.28f), E, FLinearColor(1.0f, 0.94f, 0.58f, 0.52f * A), 2.8f);
-
-            for (int32 I = 0; I < 8; ++I)
+            for (int32 I = 0; I < Samples; ++I)
             {
-                const float K = (static_cast<float>(I) + 0.5f) / 8.0f;
-                const float FadeByDistance = 1.0f - K * 0.52f;
-                const float Wobble = FMath::Sin(Fx.Radius * 0.07f + K * 10.0f + T * 5.0f);
-                const FVector2D SmokePos = FMath::Lerp(E, P, K) + Perp * Wobble * FMath::Lerp(4.0f, 24.0f, K);
-                const float SmokeSize = FMath::Lerp(9.0f, 30.0f, K) * (0.85f + T * 0.42f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.55f, SmokeSize * 0.78f), FLinearColor(0.04f, 0.045f, 0.050f, 0.12f * A * FadeByDistance));
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos - Dir * 4.0f, FVector2D(SmokeSize * 0.78f, SmokeSize * 0.40f), FLinearColor(0.44f, 0.34f, 0.20f, 0.10f * A * FadeByDistance));
+                const float U = (static_cast<float>(I) + 0.5f) / static_cast<float>(Samples);
+                const float FromHead = 1.0f - U;
+                const float Wobble = FMath::Sin(Seed + U * UE_PI * 1.55f + T * 1.8f) * FMath::Sin(U * UE_PI);
+                const FVector2D Center = FMath::Lerp(P, E, U) + Perp * Wobble * FMath::Min(16.0f, TrailLen * 0.08f) * (0.55f + T * 0.45f);
+                const float SmokeSize = FMath::Lerp(24.0f, 7.0f, U) * (0.86f + T * 0.36f);
+                const float FireSize = FMath::Lerp(6.0f, 14.0f, U) * (1.0f - T * 0.35f);
+                const float SmokeA = A * (0.11f + FromHead * 0.10f);
+                const float FireA = A * CWRunView::SmoothStep01((U - 0.14f) / 0.62f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, Center - Dir * (2.0f + FromHead * 5.0f), FVector2D(SmokeSize * 1.65f, SmokeSize * 0.78f), FLinearColor(0.035f, 0.038f, 0.042f, SmokeA));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, Center + Perp * Wobble * 2.0f, FVector2D(SmokeSize * 0.92f, SmokeSize * 0.44f), FLinearColor(0.48f, 0.34f, 0.17f, SmokeA * 0.72f));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 12, Center, FVector2D(FireSize * 1.72f, FireSize * 0.76f), FLinearColor(1.0f, 0.20f, 0.02f, 0.16f * FireA));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 13, Center + Dir * 2.0f, FVector2D(FireSize * 0.72f, FireSize * 0.38f), FLinearColor(1.0f, 0.84f, 0.34f, 0.30f * FireA));
+                HotRibbon.Add(Center);
+                CoreRibbon.Add(Center + Dir * 1.5f);
             }
 
-            for (int32 I = 0; I < 5; ++I)
+            for (int32 I = 1; I < HotRibbon.Num(); ++I)
             {
-                const float K = static_cast<float>(I) / 4.0f;
-                const FVector2D SparkStart = FMath::Lerp(E, P, K * 0.78f) + Perp * (K - 0.5f) * 9.0f;
-                const FVector2D SparkEnd = SparkStart - Dir * (12.0f + K * 34.0f) + Perp * FMath::Sin(K * 13.0f + Fx.Radius) * 8.0f;
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, SparkStart, SparkEnd, FLinearColor(1.0f, 0.78f, 0.24f, 0.20f * A), I % 2 == 0 ? 1.2f : 0.8f);
+                const float U = static_cast<float>(I) / static_cast<float>(HotRibbon.Num() - 1);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, HotRibbon[I - 1], HotRibbon[I], FLinearColor(1.0f, 0.26f, 0.03f, 0.15f * A * U), FMath::Lerp(7.0f, 3.0f, U));
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, CoreRibbon[I - 1], CoreRibbon[I], FLinearColor(1.0f, 0.92f, 0.55f, 0.28f * A * U), FMath::Lerp(2.6f, 1.1f, U));
+            }
+
+            for (int32 I = 0; I < 4; ++I)
+            {
+                const float K = static_cast<float>(I) / 3.0f;
+                const FVector2D SparkStart = FMath::Lerp(E, P, K * 0.64f) + Perp * (K - 0.5f) * 7.0f;
+                const FVector2D SparkEnd = SparkStart - Dir * (10.0f + K * 24.0f) + Perp * FMath::Sin(K * 13.0f + Fx.Radius) * 6.0f;
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, SparkStart, SparkEnd, FLinearColor(1.0f, 0.78f, 0.24f, 0.17f * A), I % 2 == 0 ? 1.0f : 0.7f);
             }
         }
         else if ((Fx.Type.StartsWith(TEXT("skill_")) && Fx.Type != TEXT("skill_pickup") && Fx.Type != TEXT("skill_dismiss")) || Fx.Type.StartsWith(TEXT("world_")))
@@ -3583,26 +3625,26 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             else if (Fx.Type == TEXT("skill_missile_trail"))
             {
                 const float TrailLen = FVector2D::Distance(P, E);
-                const float RocketBody = FMath::Clamp(22.0f + R * 0.08f, 20.0f, 42.0f);
-                const float RocketWidth = FMath::Clamp(7.0f + R * 0.025f, 7.0f, 15.0f);
+                const float RocketBody = FMath::Clamp(14.0f + R * 0.045f, 13.0f, 24.0f);
+                const float RocketWidth = FMath::Clamp(4.6f + R * 0.014f, 4.2f, 8.5f);
                 const FVector2D Nose = E + Dir * RocketBody * 0.34f;
                 const FVector2D Engine = E - Dir * RocketBody * 0.50f;
                 const FVector2D FlameTail = FMath::Lerp(P, Engine, 0.18f);
 
-                for (int32 I = 0; I < 5; ++I)
+                for (int32 I = 0; I < 8; ++I)
                 {
-                    const float K = (static_cast<float>(I) + 1.0f) / 5.0f;
-                    const FVector2D Smoke = Engine - Dir * TrailLen * K * 0.72f + Perp * FMath::Sin(Spin * 2.0f + K * 8.0f) * (5.0f + K * 12.0f);
-                    const float SmokeSize = FMath::Lerp(10.0f, 26.0f, K);
-                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 24, Smoke, FVector2D(SmokeSize * 1.45f, SmokeSize * 0.72f), FLinearColor(0.06f, 0.065f, 0.070f, 0.14f * A * (1.0f - K * 0.34f)));
-                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 25, Smoke + Perp * 2.0f, FVector2D(SmokeSize * 0.70f, SmokeSize * 0.36f), FLinearColor(0.82f, 0.44f, 0.12f, 0.12f * A * (1.0f - K * 0.42f)));
+                    const float K = (static_cast<float>(I) + 0.5f) / 8.0f;
+                    const FVector2D Smoke = FMath::Lerp(P, Engine, 1.0f - K * 0.82f) + Perp * FMath::Sin(Spin * 1.8f + K * 8.0f) * (3.0f + K * 12.0f);
+                    const float SmokeSize = FMath::Lerp(8.0f, 22.0f, K);
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 24, Smoke, FVector2D(SmokeSize * 1.50f, SmokeSize * 0.72f), FLinearColor(0.045f, 0.050f, 0.055f, 0.12f * A * (1.0f - K * 0.34f)));
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 25, Smoke + Perp * 1.5f, FVector2D(SmokeSize * 0.70f, SmokeSize * 0.34f), FLinearColor(0.90f, 0.42f, 0.10f, 0.11f * A * (1.0f - K * 0.42f)));
                 }
 
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 26, Engine, FlameTail, FLinearColor(1.0f, 0.20f, 0.02f, 0.22f * A), RocketWidth * 2.45f);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, Engine, FMath::Lerp(Engine, FlameTail, 0.62f) + Perp * FMath::Sin(Spin) * 7.0f, FLinearColor(1.0f, 0.66f, 0.10f, 0.72f * A), RocketWidth * 0.95f);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, Engine + Dir * 2.0f, Engine - Dir * RocketBody * 0.92f, FLinearColor(1.0f, 0.96f, 0.70f, 0.88f * A), RocketWidth * 0.34f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 26, Engine, FlameTail, FLinearColor(1.0f, 0.18f, 0.02f, 0.22f * A), RocketWidth * 2.10f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, Engine, FMath::Lerp(Engine, FlameTail, 0.58f) + Perp * FMath::Sin(Spin) * 5.0f, FLinearColor(1.0f, 0.66f, 0.10f, 0.78f * A), RocketWidth * 0.86f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, Engine + Dir * 1.2f, Engine - Dir * RocketBody * 0.78f, FLinearColor(1.0f, 0.96f, 0.70f, 0.90f * A), RocketWidth * 0.28f);
 
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, Engine, Nose, FLinearColor(0.05f, 0.07f, 0.09f, 0.44f * A), RocketWidth + 5.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, Engine, Nose, FLinearColor(0.05f, 0.07f, 0.09f, 0.44f * A), RocketWidth + 3.0f);
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, Engine, Nose, FLinearColor(0.44f, 0.50f, 0.58f, 0.96f * A), RocketWidth);
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 31, Engine + Perp * RocketWidth * 0.18f, Nose - Dir * RocketBody * 0.20f + Perp * RocketWidth * 0.18f, FLinearColor(1.0f, 1.0f, 0.94f, 0.48f * A), 1.4f);
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 32, Nose - Dir * RocketWidth * 1.0f, Nose, FLinearColor(C.R, C.G, C.B, 0.92f * A), RocketWidth * 0.62f);
@@ -3923,6 +3965,74 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const FVector2D Ray = (BackDir * FMath::Cos(Spread) + Perp * FMath::Sin(Spread)).GetSafeNormal();
                 const float Len = Radius * (0.20f + T * (0.78f + R0 * 0.34f));
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 24, P + Ray * Radius * 0.06f, P + Ray * Len, bMetal ? FLinearColor(0.72f, 0.96f, 1.0f, 0.58f * A) : FLinearColor(1.0f, 0.76f, 0.22f, 0.38f * A), bMetal ? 1.8f : 1.2f);
+            }
+
+            for (int32 I = 0; I < 20; ++I)
+            {
+                const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 383);
+                const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 397);
+                const float R2 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 409);
+                const float Angle = R0 * UE_PI * 2.0f;
+                const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                const float FireFlight = CWRunView::SmoothStep01(FMath::Clamp(T * (1.26f + R2 * 0.22f), 0.0f, 1.0f));
+                const float Rise = FMath::Sin(FireFlight * UE_PI) * Radius * (0.12f + R1 * 0.22f);
+                const FVector2D FlameRoot = P + Ray * Radius * (0.06f + R1 * 0.08f);
+                const FVector2D FlameTip = P + Ray * Radius * (0.16f + R1 * 0.62f) * FireFlight - FVector2D(0.0f, Rise);
+                const float FlameA = Heat * (0.28f + R2 * 0.44f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 25, FlameRoot, FlameTip, FLinearColor(1.0f, 0.18f + R1 * 0.22f, 0.02f, FlameA), 2.2f + R2 * 3.0f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 26, FlameTip, FVector2D(5.0f + R1 * 11.0f, 4.0f + R2 * 8.0f), FLinearColor(1.0f, 0.78f, 0.24f, FlameA * 0.78f));
+            }
+
+            for (int32 I = 0; I < 18; ++I)
+            {
+                const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 431);
+                const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 449);
+                const float Angle = R0 * UE_PI * 2.0f;
+                const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                const FVector2D Smoke = P + Ray * Radius * (0.12f + R1 * 0.55f) * Blast - FVector2D(0.0f, Radius * (0.05f + R1 * 0.15f) * T);
+                const float SmokeSize = Radius * (0.060f + R1 * 0.105f) * (0.72f + T * 0.62f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 16, Smoke, FVector2D(SmokeSize * 1.35f, SmokeSize * 0.74f), FLinearColor(0.035f, 0.038f, 0.042f, 0.18f * A));
+            }
+        }
+        else if (Fx.Type.StartsWith(TEXT("blast_scorch")))
+        {
+            const FString SurfaceKey = Fx.Type.ToLower();
+            const bool bAsphalt = SurfaceKey.Contains(TEXT("asphalt"));
+            const bool bGrass = SurfaceKey.Contains(TEXT("grass"));
+            const bool bDirt = SurfaceKey.Contains(TEXT("dirt"));
+            const bool bMetal = SurfaceKey.Contains(TEXT("metal"));
+            const float Radius = FMath::Clamp(Fx.Radius * Scale, 64.0f, 220.0f);
+            const float Settle = CWRunView::SmoothStep01(FMath::Clamp(T / 0.22f, 0.0f, 1.0f));
+            const float Fade = CWRunView::SmoothStep01(FMath::Clamp((1.0f - T) / 0.42f, 0.0f, 1.0f));
+            const FLinearColor Scorch = bGrass
+                ? FLinearColor(0.025f, 0.055f, 0.020f, 1.0f)
+                : (bDirt
+                    ? FLinearColor(0.12f, 0.070f, 0.035f, 1.0f)
+                    : (bMetal ? FLinearColor(0.055f, 0.060f, 0.064f, 1.0f) : FLinearColor(0.030f, 0.032f, 0.034f, 1.0f)));
+            const FLinearColor Dust = bGrass
+                ? FLinearColor(0.18f, 0.28f, 0.08f, 1.0f)
+                : (bDirt ? FLinearColor(0.38f, 0.23f, 0.10f, 1.0f) : FLinearColor(0.36f, 0.34f, 0.30f, 1.0f));
+
+            DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 16, P + FVector2D(0.0f, Radius * 0.05f), FVector2D(Radius * (1.18f + Settle * 0.18f), Radius * (0.56f + Settle * 0.10f)), FLinearColor(Scorch.R, Scorch.G, Scorch.B, 0.46f * Settle * Fade));
+            DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 17, P, FVector2D(Radius * (0.52f + Settle * 0.16f), Radius * (0.26f + Settle * 0.08f)), FLinearColor(0.0f, 0.0f, 0.0f, 0.36f * Settle * Fade));
+            DrawRing(OutDrawElements, AllottedGeometry, BackgroundLayer + 18, P, FVector2D(Radius * (0.65f + T * 0.18f), Radius * (0.65f + T * 0.18f)), FLinearColor(Dust.R, Dust.G, Dust.B, 0.18f * Fade), 2.2f, 18, Fx.Radius * 0.01f);
+
+            for (int32 I = 0; I < 16; ++I)
+            {
+                const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 467);
+                const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 479);
+                const float Angle = R0 * UE_PI * 2.0f;
+                const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                const FVector2D Ember = P + Ray * Radius * (0.08f + R1 * 0.52f) - FVector2D(0.0f, Radius * 0.10f * FMath::Sin(T * UE_PI));
+                const float EmberA = Fade * (0.18f + R1 * 0.34f) * CWRunView::SmoothStep01((1.0f - T) / 0.72f);
+                if (I % 3 == 0)
+                {
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 15, Ember, FVector2D(3.0f + R1 * 4.0f, 2.4f + R0 * 3.0f), FLinearColor(1.0f, 0.38f, 0.08f, EmberA));
+                }
+                else
+                {
+                    DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 19, Ember + FVector2D(0.0f, 2.0f), FVector2D(4.0f + R1 * 9.0f, 2.0f + R0 * 3.8f), FLinearColor(Dust.R, Dust.G, Dust.B, 0.12f * Fade));
+                }
             }
         }
         else if (Fx.Type == TEXT("boss_blood_death"))
