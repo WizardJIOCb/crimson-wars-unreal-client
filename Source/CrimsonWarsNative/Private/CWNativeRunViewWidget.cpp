@@ -414,6 +414,9 @@ void UCWNativeRunViewWidget::NativeConstruct()
         CachedState = GI->LatestState;
         CachedMyId = GI->MyId;
         StateDelegateHandle = GI->OnStateReceived.AddUObject(this, &UCWNativeRunViewWidget::HandleStateReceived);
+        SkillFxDelegateHandle = GI->OnSkillFxReceived.AddUObject(this, &UCWNativeRunViewWidget::HandleSkillFxReceived);
+        MeleeFxDelegateHandle = GI->OnMeleeFxReceived.AddUObject(this, &UCWNativeRunViewWidget::HandleMeleeFxReceived);
+        WorldFxDelegateHandle = GI->OnWorldFxReceived.AddUObject(this, &UCWNativeRunViewWidget::HandleWorldFxReceived);
     }
 
     if (AssetsRoot.IsEmpty())
@@ -431,6 +434,21 @@ void UCWNativeRunViewWidget::NativeDestruct()
         {
             GI->OnStateReceived.Remove(StateDelegateHandle);
             StateDelegateHandle.Reset();
+        }
+        if (SkillFxDelegateHandle.IsValid())
+        {
+            GI->OnSkillFxReceived.Remove(SkillFxDelegateHandle);
+            SkillFxDelegateHandle.Reset();
+        }
+        if (MeleeFxDelegateHandle.IsValid())
+        {
+            GI->OnMeleeFxReceived.Remove(MeleeFxDelegateHandle);
+            MeleeFxDelegateHandle.Reset();
+        }
+        if (WorldFxDelegateHandle.IsValid())
+        {
+            GI->OnWorldFxReceived.Remove(WorldFxDelegateHandle);
+            WorldFxDelegateHandle.Reset();
         }
     }
 
@@ -1274,11 +1292,293 @@ void UCWNativeRunViewWidget::AddFx(const FString& Type, const FVector2D& Positio
     Fx.Life = FMath::Max(0.05f, Life);
     Fx.Radius = FMath::Max(1.0f, Radius);
     TransientFx.Add(Fx);
-    constexpr int32 MaxTransientFx = 320;
+    constexpr int32 MaxTransientFx = 720;
     if (TransientFx.Num() > MaxTransientFx)
     {
         TransientFx.RemoveAt(0, TransientFx.Num() - MaxTransientFx);
     }
+}
+
+void UCWNativeRunViewWidget::HandleSkillFxReceived(const FCWSkillFxEvent& Event)
+{
+    const FString EventId = Event.Id.IsEmpty()
+        ? FString::Printf(TEXT("skill:%s:%s:%.0f:%.0f:%d"), *Event.PlayerId, *Event.SkillId, Event.X, Event.Y, Event.Level)
+        : Event.Id;
+    if (!EventId.IsEmpty())
+    {
+        if (SeenSkillFxEventIds.Contains(EventId))
+        {
+            return;
+        }
+        SeenSkillFxEventIds.Add(EventId);
+        if (SeenSkillFxEventIds.Num() > 1024)
+        {
+            SeenSkillFxEventIds.Reset();
+        }
+    }
+
+    EmitSkillFxEvent(Event);
+}
+
+void UCWNativeRunViewWidget::HandleMeleeFxReceived(const FCWMeleeFxEvent& Event)
+{
+    const FString EventId = Event.Id.IsEmpty()
+        ? FString::Printf(TEXT("melee:%s:%s:%.0f:%.0f:%d"), *Event.PlayerId, *Event.ItemId, Event.X, Event.Y, Event.HitCount)
+        : Event.Id;
+    if (!EventId.IsEmpty())
+    {
+        if (SeenMeleeFxEventIds.Contains(EventId))
+        {
+            return;
+        }
+        SeenMeleeFxEventIds.Add(EventId);
+        if (SeenMeleeFxEventIds.Num() > 1024)
+        {
+            SeenMeleeFxEventIds.Reset();
+        }
+    }
+
+    EmitMeleeFxEvent(Event);
+}
+
+void UCWNativeRunViewWidget::HandleWorldFxReceived(const FCWWorldFxEvent& Event)
+{
+    const FString EventId = Event.Id.IsEmpty()
+        ? FString::Printf(TEXT("world:%s:%s:%.0f:%.0f"), *Event.Kind, *Event.FxKey, Event.X, Event.Y)
+        : Event.Id;
+    if (!EventId.IsEmpty())
+    {
+        if (SeenWorldFxEventIds.Contains(EventId))
+        {
+            return;
+        }
+        SeenWorldFxEventIds.Add(EventId);
+        if (SeenWorldFxEventIds.Num() > 512)
+        {
+            SeenWorldFxEventIds.Reset();
+        }
+    }
+
+    EmitWorldFxEvent(Event);
+}
+
+void UCWNativeRunViewWidget::EmitSkillFxEvent(const FCWSkillFxEvent& Event)
+{
+    const FString CastKey = FString::Printf(TEXT("%s %s %s %s"), *Event.CastType, *Event.SkillId, *Event.SkillName, *Event.FxKey);
+    const FVector2D Origin(Event.X, Event.Y);
+    FVector2D Dir(Event.AimX - Event.X, Event.AimY - Event.Y);
+    if (Dir.IsNearlyZero())
+    {
+        Dir = FVector2D(1.0f, 0.0f);
+    }
+    Dir = Dir.GetSafeNormal();
+
+    const FLinearColor Primary = CWRunView::HexColor(Event.Color, FLinearColor(0.42f, 0.88f, 1.0f, 0.96f));
+    const FLinearColor Secondary = CWRunView::HexColor(Event.SecondaryColor, FLinearColor(0.96f, 0.72f, 1.0f, 0.92f));
+    const float Radius = FMath::Clamp(Event.Radius > 1.0f ? Event.Radius : 260.0f, 96.0f, 980.0f);
+
+    if (CastKey.Contains(TEXT("magnet"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("surge"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("pull"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("world_xp_surge"), Origin, Dir, FLinearColor(0.68f, 0.30f, 1.0f, 0.96f), 1.25f, Radius * 1.18f);
+        AddFx(TEXT("world_xp_surge_core"), Origin, Dir, FLinearColor(0.92f, 0.74f, 1.0f, 0.94f), 0.92f, FMath::Max(120.0f, Radius * 0.40f));
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("shield"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("barrier"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("guard"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_psi"), Origin, Dir, FLinearColor(0.34f, 1.0f, 0.86f, 0.92f), 1.05f, Radius * 0.86f);
+        AddFx(TEXT("skill_psi_core"), Origin, Dir, FLinearColor(0.92f, 1.0f, 0.96f, 0.88f), 0.84f, Radius * 0.38f);
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("regen"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("heal"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("vital"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_psi"), Origin, Dir, FLinearColor(0.28f, 1.0f, 0.48f, 0.92f), 1.00f, Radius * 0.72f);
+        AddFx(TEXT("skill_burst"), Origin, Dir, FLinearColor(0.84f, 1.0f, 0.72f, 0.86f), 0.70f, Radius * 0.38f);
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("reload"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("haste"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("speed"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_burst"), Origin, Dir, FLinearColor(1.0f, 0.86f, 0.24f, 0.92f), 0.72f, Radius * 0.48f);
+        AddFx(TEXT("skill_chain_origin"), Origin, Dir, FLinearColor(1.0f, 0.96f, 0.62f, 0.80f), 0.46f, Radius * 0.30f);
+        return;
+    }
+
+    auto AddTargetBeams = [&](const FString& BeamType, const FString& HitType, float BeamLife, float HitRadius, bool bChain)
+    {
+        FVector2D Previous = Origin;
+        int32 Index = 0;
+        for (const FCWSkillFxTarget& Target : Event.Targets)
+        {
+            const FVector2D TargetPos(Target.X, Target.Y);
+            const FLinearColor BeamColor = (Index % 2 == 0) ? Primary : Secondary;
+            AddFx(BeamType, Previous, TargetPos - Previous, BeamColor, BeamLife, FMath::Max(110.0f, Radius * 0.22f), TargetPos);
+            AddFx(HitType, TargetPos, TargetPos - Previous, (Index % 2 == 0) ? Secondary : Primary, BeamLife * 1.28f, HitRadius);
+            Previous = bChain ? TargetPos : Origin;
+            ++Index;
+        }
+    };
+
+    if (CastKey.Contains(TEXT("shockwave"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("stomp"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_shockwave"), Origin, Dir, Primary, 1.18f, Radius * 1.18f);
+        AddFx(TEXT("skill_shockwave_inner"), Origin, Dir, Secondary, 0.86f, Radius * 0.62f);
+        AddTargetBeams(TEXT("skill_chain_beam"), TEXT("skill_hit"), 0.34f, 54.0f, false);
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("psi"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("wave"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("pulse"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_psi"), Origin, Dir, Primary, 1.10f, Radius * 1.22f);
+        AddFx(TEXT("skill_psi_core"), Origin, Dir, Secondary, 0.82f, Radius * 0.44f);
+        AddTargetBeams(TEXT("skill_laser_beam"), TEXT("skill_hit"), 0.38f, 58.0f, false);
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("chain"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("lightning"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("arc"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_chain_origin"), Origin, Dir, Primary, 0.66f, 150.0f);
+        if (Event.Targets.Num() > 0)
+        {
+            AddTargetBeams(TEXT("skill_chain_beam"), TEXT("skill_chain_hit"), 0.66f, 68.0f, true);
+        }
+        else
+        {
+            for (int32 I = 0; I < 6; ++I)
+            {
+                const float Angle = FMath::Atan2(Dir.Y, Dir.X) + (static_cast<float>(I) - 2.5f) * 0.38f;
+                const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                AddFx(TEXT("skill_chain_beam"), Origin, Ray, I % 2 == 0 ? Primary : Secondary, 0.58f, 140.0f, Origin + Ray * Radius * (0.64f + I * 0.05f));
+            }
+        }
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("laser"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("lance"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("beam"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_laser_cast"), Origin, Dir, Secondary, 0.52f, 128.0f);
+        if (Event.Targets.Num() > 0)
+        {
+            AddTargetBeams(TEXT("skill_laser_beam"), TEXT("skill_laser_hit"), 0.56f, 84.0f, false);
+        }
+        else
+        {
+            AddFx(TEXT("skill_laser_beam"), Origin, Dir, Primary, 0.58f, Radius, Origin + Dir * Radius);
+            AddFx(TEXT("skill_laser_hit"), Origin + Dir * Radius, Dir, Secondary, 0.54f, 88.0f);
+        }
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("missile"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("rocket"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("barrage"), ESearchCase::IgnoreCase))
+    {
+        const int32 Count = FMath::Clamp(Event.ProjectileCount > 0 ? Event.ProjectileCount : FMath::Max(4, Event.Targets.Num()), 4, 12);
+        AddFx(TEXT("skill_missile_launch"), Origin, Dir, Primary, 0.72f, 190.0f);
+        for (int32 I = 0; I < Count; ++I)
+        {
+            const float Angle = FMath::Atan2(Dir.Y, Dir.X) + (static_cast<float>(I) - (Count - 1) * 0.5f) * 0.20f;
+            const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+            AddFx(TEXT("skill_missile_trail"), Origin + Ray * 18.0f, Ray, I % 2 == 0 ? Primary : Secondary, 0.62f, 150.0f, Origin + Ray * (180.0f + I * 8.0f));
+        }
+        for (const FCWSkillFxTarget& Target : Event.Targets)
+        {
+            AddFx(TEXT("skill_missile_lock"), FVector2D(Target.X, Target.Y), Dir, Secondary, 0.72f, 74.0f);
+        }
+        return;
+    }
+
+    if (CastKey.Contains(TEXT("blade"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("slash"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("orbit"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_blade_orbit"), Origin, Dir, Primary, 0.86f, FMath::Max(180.0f, Radius * 0.48f));
+        if (Event.Targets.Num() > 0)
+        {
+            for (const FCWSkillFxTarget& Target : Event.Targets)
+            {
+                const FVector2D TargetPos(Target.X, Target.Y);
+                AddFx(TEXT("skill_blade_slash"), TargetPos - Dir * 64.0f, Dir, Secondary, 0.54f, 128.0f, TargetPos + Dir * 64.0f);
+                AddFx(TEXT("skill_hit"), TargetPos, Dir, Primary, 0.40f, 46.0f);
+            }
+        }
+        else
+        {
+            AddFx(TEXT("skill_blade_slash"), Origin - Dir * 116.0f, Dir, Secondary, 0.58f, 160.0f, Origin + Dir * 116.0f);
+        }
+        return;
+    }
+
+    AddFx(TEXT("skill_burst"), Origin, Dir, Primary, 0.82f, FMath::Max(150.0f, Radius * 0.50f));
+    AddTargetBeams(TEXT("skill_laser_beam"), TEXT("skill_hit"), 0.34f, 48.0f, false);
+}
+
+void UCWNativeRunViewWidget::EmitMeleeFxEvent(const FCWMeleeFxEvent& Event)
+{
+    const FString Key = FString::Printf(TEXT("%s %s %s %s"), *Event.Style, *Event.ItemId, *Event.ItemName, *Event.FxKey);
+    const FVector2D Origin(Event.X, Event.Y);
+    FVector2D Dir(FMath::Cos(Event.Angle), FMath::Sin(Event.Angle));
+    if (Dir.IsNearlyZero())
+    {
+        Dir = FVector2D(1.0f, 0.0f);
+    }
+    Dir = Dir.GetSafeNormal();
+    const FVector2D Impact = FVector2D(Event.ImpactX, Event.ImpactY).IsNearlyZero()
+        ? Origin + Dir * FMath::Max(Event.Range, 96.0f)
+        : FVector2D(Event.ImpactX, Event.ImpactY);
+    const FLinearColor Primary = CWRunView::HexColor(Event.Color, FLinearColor(1.0f, 0.72f, 0.22f, 0.96f));
+    const FLinearColor Secondary = CWRunView::HexColor(Event.SecondaryColor, FLinearColor(0.98f, 0.98f, 1.0f, 0.92f));
+    const float Radius = FMath::Clamp(Event.Range > 1.0f ? Event.Range : 150.0f, 72.0f, 420.0f);
+
+    AddFx(TEXT("skill_melee_arc"), Origin, Dir, Primary, 0.48f, Radius, Impact);
+    if (Key.Contains(TEXT("chainsaw"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("saw"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_saw"), Origin, Dir, Primary, 0.66f, Radius, Impact);
+        AddFx(TEXT("skill_melee_sparks"), Impact, Dir, Secondary, 0.58f, 92.0f);
+    }
+    else if (Key.Contains(TEXT("hammer"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("maul"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_hammer"), Impact, Dir, Primary, 0.72f, FMath::Max(132.0f, Radius * 0.72f));
+    }
+    else if (Key.Contains(TEXT("bat"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("club"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_bat"), Origin, Dir, Primary, 0.52f, Radius, Impact);
+    }
+    else if (Key.Contains(TEXT("cryo"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("ice"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_cryo"), Impact, Dir, FLinearColor(0.62f, 0.90f, 1.0f, 0.94f), 0.74f, FMath::Max(116.0f, Radius * 0.62f));
+    }
+    else if (Key.Contains(TEXT("plasma"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_plasma"), Origin, Dir, Primary, 0.62f, Radius, Impact);
+    }
+    else if (Key.Contains(TEXT("mono"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("wire"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_wire"), Origin, Dir, Primary, 0.62f, Radius * 1.18f, Impact);
+    }
+    else if (Key.Contains(TEXT("void"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("scythe"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_melee_void"), Impact, Dir, FLinearColor(0.72f, 0.38f, 1.0f, 0.95f), 0.78f, FMath::Max(140.0f, Radius * 0.75f));
+    }
+    else
+    {
+        AddFx(TEXT("skill_blade_slash"), Origin - Dir * 36.0f, Dir, Secondary, 0.48f, Radius, Impact);
+    }
+}
+
+void UCWNativeRunViewWidget::EmitWorldFxEvent(const FCWWorldFxEvent& Event)
+{
+    const FString Key = FString::Printf(TEXT("%s %s"), *Event.Kind, *Event.FxKey);
+    const FVector2D Origin(Event.X, Event.Y);
+    const FLinearColor Primary = CWRunView::HexColor(Event.Color, FLinearColor(0.68f, 0.30f, 1.0f, 0.94f));
+    const FLinearColor Secondary = CWRunView::HexColor(Event.SecondaryColor, FLinearColor(0.94f, 0.74f, 1.0f, 0.90f));
+    const float Radius = FMath::Clamp(Event.Radius > 1.0f ? Event.Radius : 360.0f, 120.0f, 1100.0f);
+
+    if (Key.Contains(TEXT("xp_surge"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("magnet"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("world_xp_surge"), Origin, FVector2D(1.0f, 0.0f), Primary, 1.25f, Radius);
+        AddFx(TEXT("world_xp_surge_core"), Origin, FVector2D(1.0f, 0.0f), Secondary, 0.92f, FMath::Max(110.0f, Radius * 0.34f));
+        return;
+    }
+
+    AddFx(TEXT("world_pulse"), Origin, FVector2D(1.0f, 0.0f), Primary, 0.86f, Radius * 0.62f);
 }
 
 void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& PreviousState, const FCWRoomSnapshot& NextState)
@@ -1300,6 +1600,17 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
             if (!Bullet.Id.IsEmpty())
             {
                 PreviousBulletPositions.Add(Bullet.Id, FVector2D(Bullet.X, Bullet.Y));
+            }
+        }
+        PreviousSkillCooldowns.Reset();
+        for (const FCWPlayerSnapshot& Player : NextState.Players)
+        {
+            for (const FCWSkillSnapshot& Skill : Player.Skills)
+            {
+                if (Skill.Level > 0 && !Skill.Id.IsEmpty())
+                {
+                    PreviousSkillCooldowns.Add(FString::Printf(TEXT("%s:%s"), *Player.Id, *Skill.Id), Skill.CooldownMs);
+                }
             }
         }
         return;
@@ -1419,6 +1730,81 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         CurrentBulletIds.Add(Bullet.Id);
         PreviousBulletPositions.Add(Bullet.Id, FVector2D(Bullet.X, Bullet.Y));
     }
+
+    TMap<FString, float> NextSkillCooldowns;
+    for (const FCWPlayerSnapshot& Player : NextState.Players)
+    {
+        if (!Player.bAlive)
+        {
+            continue;
+        }
+
+        for (const FCWSkillSnapshot& Skill : Player.Skills)
+        {
+            if (Skill.Level <= 0 || Skill.Id.IsEmpty())
+            {
+                continue;
+            }
+
+            const FString SkillKey = FString::Printf(TEXT("%s:%s"), *Player.Id, *Skill.Id);
+            const float PreviousCooldown = PreviousSkillCooldowns.FindRef(SkillKey);
+            const bool bKnownSkill = PreviousSkillCooldowns.Contains(SkillKey);
+            const bool bActive = Skill.Kind.Equals(TEXT("active"), ESearchCase::IgnoreCase);
+            const bool bFreshCooldown = Skill.CooldownMs > 120.0f && (!bKnownSkill || PreviousCooldown <= 85.0f || Skill.CooldownMs > PreviousCooldown + 350.0f);
+
+            if (bActive && bFreshCooldown)
+            {
+                FCWSkillFxEvent Event;
+                Event.Id = FString::Printf(TEXT("fallback:%s:%s:%.0f"), *Player.Id, *Skill.Id, NextState.ServerNowMs);
+                Event.PlayerId = Player.Id;
+                Event.PlayerName = Player.Name;
+                Event.HeroId = Player.PlayerClass;
+                Event.SkillId = Skill.Id;
+                Event.SkillName = Skill.Name;
+                Event.CastType = Skill.CastType.IsEmpty() ? Skill.Id : Skill.CastType;
+                Event.FxKey = Skill.FxKey;
+                Event.Level = Skill.Level;
+                Event.X = Player.X;
+                Event.Y = Player.Y;
+                Event.AimX = Player.AimX;
+                Event.AimY = Player.AimY;
+
+                const FString CastKey = FString::Printf(TEXT("%s %s %s"), *Event.CastType, *Event.SkillId, *Event.FxKey);
+                const bool bWide = CastKey.Contains(TEXT("shockwave"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("psi"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("wave"), ESearchCase::IgnoreCase);
+                const bool bLaser = CastKey.Contains(TEXT("laser"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("lance"), ESearchCase::IgnoreCase);
+                const bool bChain = CastKey.Contains(TEXT("chain"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("lightning"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("arc"), ESearchCase::IgnoreCase);
+                const bool bMissile = CastKey.Contains(TEXT("missile"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("rocket"), ESearchCase::IgnoreCase) || CastKey.Contains(TEXT("barrage"), ESearchCase::IgnoreCase);
+                Event.Radius = bLaser ? 720.0f : (bChain ? 520.0f : (bWide ? 430.0f : (bMissile ? 360.0f : 280.0f)));
+                Event.ProjectileCount = bMissile ? 6 : 0;
+
+                const int32 MaxTargets = bLaser ? 6 : (bChain ? 7 : (bMissile ? 6 : 4));
+                for (const FCWEnemySnapshot& Enemy : NextState.Enemies)
+                {
+                    if (Event.Targets.Num() >= MaxTargets)
+                    {
+                        break;
+                    }
+                    const float DistSq = FVector2D::DistSquared(FVector2D(Player.X, Player.Y), FVector2D(Enemy.X, Enemy.Y));
+                    if (DistSq > FMath::Square(Event.Radius + 120.0f))
+                    {
+                        continue;
+                    }
+
+                    FCWSkillFxTarget Target;
+                    Target.Id = Enemy.Id;
+                    Target.Kind = TEXT("enemy");
+                    Target.X = Enemy.X;
+                    Target.Y = Enemy.Y;
+                    Event.Targets.Add(Target);
+                }
+
+                EmitSkillFxEvent(Event);
+            }
+
+            NextSkillCooldowns.Add(SkillKey, Skill.CooldownMs);
+        }
+    }
+    PreviousSkillCooldowns = MoveTemp(NextSkillCooldowns);
 
     for (const TPair<FString, FCWBulletSnapshot>& Pair : PreviousBullets)
     {
@@ -2980,7 +3366,157 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             return E;
         };
 
-        if (Fx.Type == TEXT("dodge"))
+        if ((Fx.Type.StartsWith(TEXT("skill_")) && Fx.Type != TEXT("skill_pickup") && Fx.Type != TEXT("skill_dismiss")) || Fx.Type.StartsWith(TEXT("world_")))
+        {
+            const float R = FMath::Clamp(Fx.Radius * Scale, 34.0f, 560.0f);
+            FVector2D Dir = (E - P).IsNearlyZero() ? Fx.Direction : (E - P).GetSafeNormal();
+            if (Dir.IsNearlyZero())
+            {
+                Dir = FVector2D(1.0f, 0.0f);
+            }
+            const FVector2D Perp(-Dir.Y, Dir.X);
+            const float Pop = FMath::Sin(T * UE_PI);
+            const float Spin = T * UE_PI * 3.4f + Fx.Radius * 0.019f;
+            const FLinearColor CoreColor(1.0f, 1.0f, 1.0f, 0.82f * A);
+            const FLinearColor SoftColor(C.R, C.G, C.B, 0.16f * A);
+            const FLinearColor GlowColor(C.R, C.G, C.B, 0.46f * A);
+
+            auto DrawDiamond = [&](const FVector2D& Center, float SizePx, const FLinearColor& Color, int32 Layer)
+            {
+                const FVector2D Top = Center + FVector2D(0.0f, -SizePx);
+                const FVector2D Right = Center + FVector2D(SizePx * 0.58f, 0.0f);
+                const FVector2D Bottom = Center + FVector2D(0.0f, SizePx);
+                const FVector2D Left = Center + FVector2D(-SizePx * 0.58f, 0.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer, Top, Right, Color, 2.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer, Right, Bottom, Color, 2.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer, Bottom, Left, Color, 2.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer, Left, Top, Color, 2.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer + 1, Top, Bottom, FLinearColor(1.0f, 1.0f, 1.0f, 0.34f * A), 1.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, Layer + 1, Left, Right, FLinearColor(Color.R, Color.G, Color.B, 0.38f * A), 1.0f);
+            };
+
+            if (Fx.Type == TEXT("world_xp_surge") || Fx.Type == TEXT("world_xp_surge_core"))
+            {
+                const float CrystalSize = FMath::Clamp(R * (Fx.Type == TEXT("world_xp_surge_core") ? 0.34f : 0.22f), 24.0f, 76.0f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 20, P, FVector2D(R * (1.45f + T * 0.38f), R * (0.92f + T * 0.30f)), FLinearColor(0.36f, 0.06f, 0.60f, 0.20f * A));
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 28, P, FVector2D(R * (0.70f + T * 1.25f), R * (0.70f + T * 1.25f)), FLinearColor(0.82f, 0.42f, 1.0f, 0.66f * A), 4.0f, 24, Spin);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 29, P, FVector2D(R * (0.34f + T * 0.82f), R * (0.34f + T * 0.82f)), FLinearColor(0.40f, 0.96f, 1.0f, 0.54f * A), 2.2f, 18, -Spin * 1.35f);
+                DrawDiamond(P - FVector2D(0.0f, CrystalSize * 0.15f), CrystalSize * (0.82f + Pop * 0.20f), FLinearColor(0.92f, 0.68f, 1.0f, 0.92f * A), ActorLayer + 32);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 31, P, FVector2D(CrystalSize * 1.35f, CrystalSize * 1.65f), FLinearColor(0.68f, 0.25f, 1.0f, 0.24f * A));
+                for (int32 I = 0; I < 14; ++I)
+                {
+                    const float K = static_cast<float>(I) / 14.0f;
+                    const float Angle = K * UE_PI * 2.0f - Spin * 0.75f;
+                    const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                    const float Outer = R * (0.96f + 0.24f * FMath::Sin(Spin + K * 8.0f));
+                    const float Inner = R * (0.24f + 0.08f * FMath::Cos(Spin + K * 11.0f));
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, P + Ray * Outer, P + Ray * Inner, FLinearColor(0.88f, 0.54f, 1.0f, 0.34f * A), I % 3 == 0 ? 2.4f : 1.3f);
+                }
+            }
+            else if (Fx.Type.Contains(TEXT("beam"), ESearchCase::IgnoreCase))
+            {
+                const bool bChain = Fx.Type.Contains(TEXT("chain"), ESearchCase::IgnoreCase);
+                if (bChain)
+                {
+                    const int32 Segs = 7;
+                    FVector2D Prev = P;
+                    for (int32 I = 1; I <= Segs; ++I)
+                    {
+                        const float U = static_cast<float>(I) / static_cast<float>(Segs);
+                        const float Jitter = (I == Segs ? 0.0f : FMath::Sin(Spin * 3.2f + I * 2.17f) * (10.0f + R * 0.035f));
+                        const FVector2D Curr = FMath::Lerp(P, E, U) + Perp * Jitter;
+                        DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, Prev, Curr, FLinearColor(C.R, C.G, C.B, 0.30f * A), 13.0f);
+                        DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, Prev, Curr, FLinearColor(0.90f, 0.98f, 1.0f, 0.92f * A), 3.4f);
+                        Prev = Curr;
+                    }
+                }
+                else
+                {
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, P, E, FLinearColor(C.R, C.G, C.B, 0.26f * A), 24.0f);
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, P - Perp * 4.0f, E - Perp * 4.0f, FLinearColor(C.R, C.G, C.B, 0.68f * A), 7.0f);
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, P + Perp * 4.0f, E + Perp * 4.0f, FLinearColor(1.0f, 1.0f, 1.0f, 0.86f * A), 2.6f);
+                    DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 31, E, FVector2D(46.0f + Pop * 18.0f, 46.0f + Pop * 18.0f), FLinearColor(C.R, C.G, C.B, 0.58f * A), 2.2f, 16, Spin);
+                }
+            }
+            else if (Fx.Type == TEXT("skill_missile_trail"))
+            {
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, P - Dir * 28.0f, E, FLinearColor(1.0f, 0.35f, 0.06f, 0.28f * A), 19.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 28, P - Dir * 12.0f, E + Dir * 8.0f, FLinearColor(C.R, C.G, C.B, 0.84f * A), 5.0f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 29, E, FVector2D(18.0f + Pop * 10.0f, 13.0f + Pop * 6.0f), FLinearColor(1.0f, 0.92f, 0.54f, 0.70f * A));
+            }
+            else if (Fx.Type == TEXT("skill_missile_launch"))
+            {
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 25, P, FVector2D(R * 0.80f, R * 0.50f), SoftColor);
+                for (int32 I = 0; I < 9; ++I)
+                {
+                    const float Angle = FMath::Atan2(Dir.Y, Dir.X) + (static_cast<float>(I) - 4.0f) * 0.20f;
+                    const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, P + Ray * 12.0f, P + Ray * (R * (0.42f + T * 0.38f)), FLinearColor(C.R, C.G, C.B, 0.56f * A), I % 2 == 0 ? 3.2f : 1.8f);
+                }
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 30, P, FVector2D(R * (0.26f + T * 0.52f), R * (0.26f + T * 0.52f)), GlowColor, 3.0f, 18, Spin);
+            }
+            else if (Fx.Type.Contains(TEXT("slash"), ESearchCase::IgnoreCase) || Fx.Type.Contains(TEXT("melee_arc"), ESearchCase::IgnoreCase) || Fx.Type.Contains(TEXT("wire"), ESearchCase::IgnoreCase) || Fx.Type.Contains(TEXT("bat"), ESearchCase::IgnoreCase) || Fx.Type.Contains(TEXT("plasma"), ESearchCase::IgnoreCase))
+            {
+                const bool bWire = Fx.Type.Contains(TEXT("wire"), ESearchCase::IgnoreCase);
+                const bool bPlasma = Fx.Type.Contains(TEXT("plasma"), ESearchCase::IgnoreCase);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 27, P - Perp * R * 0.08f, E + Perp * R * 0.08f, FLinearColor(C.R, C.G, C.B, (bPlasma ? 0.30f : 0.22f) * A), bWire ? 10.0f : 22.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, P, E, FLinearColor(C.R, C.G, C.B, 0.84f * A), bWire ? 2.0f : 5.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, P + Perp * 8.0f * Pop, E + Perp * 8.0f * Pop, CoreColor, bWire ? 1.1f : 2.2f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 26, FMath::Lerp(P, E, 0.52f), FVector2D(R * 0.92f, R * 0.28f), FLinearColor(C.R, C.G, C.B, 0.10f * A));
+                for (int32 I = 0; I < 7; ++I)
+                {
+                    const float K = static_cast<float>(I) / 6.0f;
+                    const FVector2D M = FMath::Lerp(P, E, K) + Perp * FMath::Sin(Spin + K * 7.0f) * (bWire ? 6.0f : 13.0f);
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 31, M, FVector2D(4.5f + Pop * 3.0f, 4.5f + Pop * 3.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.46f * A));
+                }
+            }
+            else if (Fx.Type == TEXT("skill_blade_orbit"))
+            {
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 27, P, FVector2D(R * (0.86f + T * 0.28f), R * (0.86f + T * 0.28f)), GlowColor, 4.0f, 18, Spin);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 28, P, FVector2D(R * (0.46f + T * 0.18f), R * (0.46f + T * 0.18f)), CoreColor, 1.8f, 12, -Spin);
+                for (int32 I = 0; I < 6; ++I)
+                {
+                    const float Angle = Spin + static_cast<float>(I) * UE_PI * 2.0f / 6.0f;
+                    const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                    const FVector2D Tangent(-Ray.Y, Ray.X);
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 30, P + Ray * R * 0.28f - Tangent * 18.0f, P + Ray * R * 0.66f + Tangent * 28.0f, FLinearColor(C.R, C.G, C.B, 0.74f * A), 2.5f);
+                }
+            }
+            else if (Fx.Type.Contains(TEXT("shockwave"), ESearchCase::IgnoreCase) || Fx.Type.Contains(TEXT("psi"), ESearchCase::IgnoreCase) || Fx.Type == TEXT("skill_burst") || Fx.Type == TEXT("skill_chain_origin") || Fx.Type == TEXT("world_pulse"))
+            {
+                const bool bPsi = Fx.Type.Contains(TEXT("psi"), ESearchCase::IgnoreCase);
+                const float RingScale = bPsi ? 1.18f : 1.0f;
+                DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 19, P, FVector2D(R * (1.06f + T * 0.42f), R * (0.58f + T * 0.24f)), SoftColor);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 27, P, FVector2D(R * RingScale * (0.36f + T * 1.12f), R * RingScale * (0.36f + T * 1.12f)), GlowColor, bPsi ? 3.2f : 4.2f, bPsi ? 22 : 20, Spin);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 28, P, FVector2D(R * (0.18f + T * 0.54f), R * (0.18f + T * 0.54f)), CoreColor, bPsi ? 1.6f : 2.2f, bPsi ? 9 : 16, -Spin * 1.2f);
+                for (int32 I = 0; I < (bPsi ? 20 : 14); ++I)
+                {
+                    const float Angle = static_cast<float>(I) * UE_PI * 2.0f / static_cast<float>(bPsi ? 20 : 14) + Spin * (bPsi ? 0.55f : 0.25f);
+                    const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, P + Ray * R * (0.10f + T * 0.12f), P + Ray * R * (0.28f + T * 0.84f), FLinearColor(C.R, C.G, C.B, (bPsi ? 0.40f : 0.32f) * A), bPsi && I % 2 == 0 ? 2.0f : 1.2f);
+                }
+            }
+            else
+            {
+                const bool bVoid = Fx.Type.Contains(TEXT("void"), ESearchCase::IgnoreCase);
+                const bool bCryo = Fx.Type.Contains(TEXT("cryo"), ESearchCase::IgnoreCase);
+                const bool bHammer = Fx.Type.Contains(TEXT("hammer"), ESearchCase::IgnoreCase);
+                DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 20, P, FVector2D(R * (bHammer ? 1.25f : 0.72f), R * (bHammer ? 0.72f : 0.46f)), bVoid ? FLinearColor(0.10f, 0.0f, 0.16f, 0.34f * A) : SoftColor);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 27, P, FVector2D(R * (0.25f + T * 0.94f), R * (0.25f + T * 0.94f)), bCryo ? FLinearColor(0.72f, 0.96f, 1.0f, 0.58f * A) : GlowColor, bHammer ? 5.0f : 3.0f, bVoid ? 7 : 18, Spin);
+                for (int32 I = 0; I < (bHammer ? 18 : 11); ++I)
+                {
+                    const float Angle = static_cast<float>(I) * UE_PI * 2.0f / static_cast<float>(bHammer ? 18 : 11) + Spin;
+                    const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                    const float Len = R * (0.22f + T * (bHammer ? 0.94f : 0.62f));
+                    DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 29, P + Ray * 5.0f, P + Ray * Len, bCryo ? FLinearColor(0.84f, 1.0f, 1.0f, 0.52f * A) : FLinearColor(C.R, C.G, C.B, 0.58f * A), I % 3 == 0 ? 2.2f : 1.2f);
+                    if (I % 2 == 0)
+                    {
+                        DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 30, P + Ray * Len, FVector2D(6.0f + Pop * 4.0f, 6.0f + Pop * 4.0f), CoreColor);
+                    }
+                }
+            }
+        }
+        else if (Fx.Type == TEXT("dodge"))
         {
             const FVector2D Dir = (E - P).GetSafeNormal();
             const FVector2D Perp(-Dir.Y, Dir.X);

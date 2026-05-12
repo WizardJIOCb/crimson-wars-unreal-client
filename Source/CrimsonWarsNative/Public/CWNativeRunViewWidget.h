@@ -61,10 +61,16 @@ private:
     };
 
     void HandleStateReceived(const FCWRoomSnapshot& State);
+    void HandleSkillFxReceived(const FCWSkillFxEvent& Event);
+    void HandleMeleeFxReceived(const FCWMeleeFxEvent& Event);
+    void HandleWorldFxReceived(const FCWWorldFxEvent& Event);
     void UpdateRenderPlayers(float DeltaTime);
     void UpdateRenderEntities(float DeltaTime);
     void UpdateTransientFx(float DeltaTime);
     void EmitStateTransitionFx(const FCWRoomSnapshot& PreviousState, const FCWRoomSnapshot& NextState);
+    void EmitSkillFxEvent(const FCWSkillFxEvent& Event);
+    void EmitMeleeFxEvent(const FCWMeleeFxEvent& Event);
+    void EmitWorldFxEvent(const FCWWorldFxEvent& Event);
     void AddFx(const FString& Type, const FVector2D& Position, const FVector2D& Direction, const FLinearColor& Color, float Life, float Radius, const FVector2D& EndPosition = FVector2D::ZeroVector);
     void LoadRunAssets();
     void LoadSkillIconTextures();
@@ -94,6 +100,9 @@ private:
     FCWRoomSnapshot CachedState;
     FString CachedMyId;
     FDelegateHandle StateDelegateHandle;
+    FDelegateHandle SkillFxDelegateHandle;
+    FDelegateHandle MeleeFxDelegateHandle;
+    FDelegateHandle WorldFxDelegateHandle;
     TMap<FString, FRenderPlayerState> RenderPlayers;
     TMap<FString, FRenderEntityState> RenderEnemies;
     TMap<FString, FRenderEntityState> RenderBullets;
@@ -103,10 +112,14 @@ private:
     TArray<FString> SkillIconTextureKeys;
     TArray<FTransientFx> TransientFx;
     TSet<FString> SeenShotEventIds;
+    TSet<FString> SeenSkillFxEventIds;
+    TSet<FString> SeenMeleeFxEventIds;
+    TSet<FString> SeenWorldFxEventIds;
     TSet<FString> SeenObjectImpactEventIds;
     TSet<FString> HiddenDropKeys;
     TSet<FString> HiddenXpOrbKeys;
     TSet<FString> HiddenSkillOrbKeys;
     TMap<FString, float> PreviousEnemyHp;
     TMap<FString, FVector2D> PreviousBulletPositions;
+    TMap<FString, float> PreviousSkillCooldowns;
 };
