@@ -163,7 +163,7 @@ namespace CWRunView
         }
 
         const float MaxDim = FMath::Max(Size.X, Size.Y);
-        const int32 Slices = FMath::Clamp(FMath::RoundToInt(MaxDim * 0.30f), 5, 46);
+        const int32 Slices = FMath::Clamp(FMath::RoundToInt(MaxDim * 0.16f), 4, 24);
         const float HalfW = FMath::Max(1.0f, Size.X * 0.5f);
         const float HalfH = FMath::Max(1.0f, Size.Y * 0.5f);
         const float Thickness = FMath::Max(1.0f, (Size.Y / static_cast<float>(Slices)) * 1.08f);
@@ -190,7 +190,7 @@ namespace CWRunView
     {
         const float HalfW = FMath::Max(1.0f, Size.X * 0.5f);
         const float HalfH = FMath::Max(1.0f, Size.Y * 0.5f);
-        const int32 SafeSegments = FMath::Clamp(Segments, 10, 72);
+        const int32 SafeSegments = FMath::Clamp(Segments, 10, 48);
         for (int32 I = 0; I < SafeSegments; ++I)
         {
             const float A0 = PhaseRadians + static_cast<float>(I) * UE_PI * 2.0f / static_cast<float>(SafeSegments);
@@ -1294,7 +1294,7 @@ void UCWNativeRunViewWidget::AddFx(const FString& Type, const FVector2D& Positio
     Fx.Life = FMath::Max(0.05f, Life);
     Fx.Radius = FMath::Max(1.0f, Radius);
     TransientFx.Add(Fx);
-    constexpr int32 MaxTransientFx = 720;
+    constexpr int32 MaxTransientFx = 420;
     if (TransientFx.Num() > MaxTransientFx)
     {
         TransientFx.RemoveAt(0, TransientFx.Num() - MaxTransientFx);
@@ -1804,7 +1804,7 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         const FVector2D CurrentBulletPos(Bullet.X, Bullet.Y);
         const FVector2D* PreviousBulletPos = PreviousBulletPositions.Find(Bullet.Id);
         const bool bRocketBullet = Bullet.Kind.Equals(TEXT("rocket"), ESearchCase::IgnoreCase) || Bullet.ExplosionRadius > 1.0f;
-        if (bRocketBullet && PreviousBulletPos && FVector2D::DistSquared(*PreviousBulletPos, CurrentBulletPos) > FMath::Square(4.0f))
+        if (bRocketBullet && PreviousBulletPos && FVector2D::DistSquared(*PreviousBulletPos, CurrentBulletPos) > FMath::Square(12.0f))
         {
             FVector2D TrailDir(Bullet.Vx, Bullet.Vy);
             if (TrailDir.IsNearlyZero())
@@ -1814,7 +1814,7 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
             const FLinearColor TrailColor = Bullet.bFromEnemy
                 ? FLinearColor(1.0f, 0.22f, 0.08f, 0.86f)
                 : CWRunView::HexColor(Bullet.Color, FLinearColor(1.0f, 0.66f, 0.12f, 0.86f));
-            AddFx(TEXT("rocket_trail"), *PreviousBulletPos, TrailDir, TrailColor, 1.18f, FMath::Clamp(FVector2D::Distance(*PreviousBulletPos, CurrentBulletPos), 54.0f, 240.0f), CurrentBulletPos);
+            AddFx(TEXT("rocket_trail"), *PreviousBulletPos, TrailDir, TrailColor, 0.78f, FMath::Clamp(FVector2D::Distance(*PreviousBulletPos, CurrentBulletPos), 48.0f, 190.0f), CurrentBulletPos);
         }
         PreviousBulletPositions.Add(Bullet.Id, CurrentBulletPos);
     }
@@ -3513,7 +3513,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             const FVector2D Perp(-Dir.Y, Dir.X);
             const float TrailLen = FVector2D::Distance(P, E);
             const float Seed = Fx.Radius * 0.041f + Fx.Position.X * 0.003f + Fx.Position.Y * 0.002f;
-            const int32 Samples = 13;
+            const int32 Samples = 8;
             TArray<FVector2D> HotRibbon;
             TArray<FVector2D> CoreRibbon;
             HotRibbon.Reserve(Samples);
@@ -3529,8 +3529,11 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const float FireSize = FMath::Lerp(6.0f, 14.0f, U) * (1.0f - T * 0.35f);
                 const float SmokeA = A * (0.11f + FromHead * 0.10f);
                 const float FireA = A * CWRunView::SmoothStep01((U - 0.14f) / 0.62f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, Center - Dir * (2.0f + FromHead * 5.0f), FVector2D(SmokeSize * 1.65f, SmokeSize * 0.78f), FLinearColor(0.035f, 0.038f, 0.042f, SmokeA));
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, Center + Perp * Wobble * 2.0f, FVector2D(SmokeSize * 0.92f, SmokeSize * 0.44f), FLinearColor(0.48f, 0.34f, 0.17f, SmokeA * 0.72f));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, Center - Dir * (2.0f + FromHead * 5.0f), FVector2D(SmokeSize * 1.55f, SmokeSize * 0.72f), FLinearColor(0.035f, 0.038f, 0.042f, SmokeA));
+                if (I % 2 == 0)
+                {
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, Center + Perp * Wobble * 2.0f, FVector2D(SmokeSize * 0.86f, SmokeSize * 0.40f), FLinearColor(0.48f, 0.34f, 0.17f, SmokeA * 0.62f));
+                }
                 DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 12, Center, FVector2D(FireSize * 1.72f, FireSize * 0.76f), FLinearColor(1.0f, 0.20f, 0.02f, 0.16f * FireA));
                 DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 13, Center + Dir * 2.0f, FVector2D(FireSize * 0.72f, FireSize * 0.38f), FLinearColor(1.0f, 0.84f, 0.34f, 0.30f * FireA));
                 HotRibbon.Add(Center);
@@ -3811,7 +3814,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 16, P, FVector2D(PulseRadius * 0.82f, PulseRadius * 0.82f), FLinearColor(C.R, C.G, C.B, 0.12f * A * (0.35f + Pop)));
             DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 17, P, FVector2D(PulseRadius, PulseRadius), FLinearColor(C.R, C.G, C.B, 0.50f * A), 2.2f, 6, Spin);
             DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 18, P, FVector2D(PulseRadius * 0.62f, PulseRadius * 0.62f), FLinearColor(1.0f, 1.0f, 1.0f, 0.34f * A), 1.3f, 3, -Spin * 1.35f);
-            for (int32 I = 0; I < 12; ++I)
+            for (int32 I = 0; I < 8; ++I)
             {
                 const float K = static_cast<float>(I) / 12.0f;
                 const float Angle = K * UE_PI * 2.0f + Spin + FMath::Sin(K * 19.0f) * 0.18f;
@@ -3942,15 +3945,15 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                     : FLinearColor(Dust.R, Dust.G, Dust.B, 0.15f * A);
                 DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 17, BlobP, FVector2D(BlobW, BlobH), BlobColor);
             }
-            DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 18, P, FVector2D(Radius * (0.25f + Blast * 1.42f), Radius * (0.25f + Blast * 1.42f)), FLinearColor(1.0f, 0.74f, 0.18f, 0.34f * A), 3.8f, 64, T * UE_PI);
-            DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 19, P, FVector2D(Radius * (0.16f + Blast * 0.95f), Radius * (0.16f + Blast * 0.95f)), FLinearColor(1.0f, 0.20f, 0.04f, 0.38f * A), 5.0f, 52, -T * UE_PI * 1.6f);
+            DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 18, P, FVector2D(Radius * (0.25f + Blast * 1.42f), Radius * (0.25f + Blast * 1.42f)), FLinearColor(1.0f, 0.74f, 0.18f, 0.34f * A), 3.4f, 42, T * UE_PI);
+            DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 19, P, FVector2D(Radius * (0.16f + Blast * 0.95f), Radius * (0.16f + Blast * 0.95f)), FLinearColor(1.0f, 0.20f, 0.04f, 0.38f * A), 4.4f, 36, -T * UE_PI * 1.6f);
 
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 20, P - FVector2D(0.0f, Radius * 0.12f * FirePop), FVector2D(Radius * (0.64f + FirePop * 0.34f), Radius * (0.44f + FirePop * 0.28f)), FLinearColor(1.0f, 0.18f, 0.02f, 0.34f * Heat));
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 21, P - FVector2D(0.0f, Radius * 0.20f * FirePop), FVector2D(Radius * (0.32f + FirePop * 0.24f), Radius * (0.28f + FirePop * 0.20f)), FLinearColor(1.0f, 0.74f, 0.12f, 0.56f * Heat));
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 22, P - FVector2D(0.0f, Radius * 0.25f * FirePop), FVector2D(Radius * (0.15f + FirePop * 0.11f), Radius * (0.14f + FirePop * 0.09f)), FLinearColor(1.0f, 0.96f, 0.70f, 0.68f * Heat));
 
             const float FlashA = Heat * CWRunView::SmoothStep01(FMath::Clamp((0.72f - T) / 0.72f, 0.0f, 1.0f));
-            for (int32 I = 0; I < 14; ++I)
+            for (int32 I = 0; I < 10; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 283);
                 const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 293);
@@ -3961,7 +3964,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 22, P + Ray * Inner, P + Ray * Outer, FLinearColor(1.0f, 0.62f, 0.15f, 0.20f * FlashA), 1.4f + R1 * 2.2f);
             }
 
-            for (int32 I = 0; I < 34; ++I)
+            for (int32 I = 0; I < 22; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 301);
                 const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 317);
@@ -3992,7 +3995,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 }
             }
 
-            for (int32 I = 0; I < 18; ++I)
+            for (int32 I = 0; I < 10; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 337);
                 const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 341);
@@ -4012,7 +4015,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 23, Clod + FVector2D(0.0f, ClodH * 0.55f), FVector2D(ClodW * 1.95f, ClodH * 1.05f), FLinearColor(Dust.R, Dust.G, Dust.B, 0.14f * ClodA));
             }
 
-            for (int32 I = 0; I < (bMetal ? 26 : 18); ++I)
+            for (int32 I = 0; I < (bMetal ? 14 : 10); ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 353);
                 const float Spread = -0.92f + R0 * 1.84f;
@@ -4021,7 +4024,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 25, P + Ray * Radius * 0.12f, P + Ray * Len, bMetal ? FLinearColor(0.72f, 0.96f, 1.0f, 0.46f * A) : FLinearColor(1.0f, 0.76f, 0.22f, 0.22f * FlashA), bMetal ? 1.5f : 0.9f);
             }
 
-            for (int32 I = 0; I < 20; ++I)
+            for (int32 I = 0; I < 12; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 383);
                 const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 397);
@@ -4039,7 +4042,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 28, FlameTip, FVector2D(5.0f + R1 * 11.0f, 4.0f + R2 * 8.0f), FLinearColor(1.0f, 0.78f, 0.24f, FlameA * 0.70f));
             }
 
-            for (int32 I = 0; I < 18; ++I)
+            for (int32 I = 0; I < 10; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 431);
                 const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 449);

@@ -26,10 +26,17 @@ public:
     void HandleGlobalF10Pressed();
     bool IsNativeRendererActive() const { return bUseNativeRenderer; }
     bool IsNativeRunMenuOpen() const { return bNativeRunMenuOpen; }
+    bool IsNativeStatsPanelOpen() const { return bNativeStatsPanelOpen; }
+    bool IsNativePlayersPanelOpen() const { return bNativePlayersPanelOpen; }
+    bool IsNativeChatOpen() const { return bNativeChatOpen; }
+    FString GetNativeChatDraft() const { return NativeChatDraft; }
     bool IsNativeRunInputActive() const;
     bool HandleNativeHudClickAtMouse();
     bool HandleNativeHudClickAtScreenPosition(const FVector2D& ScreenPosition);
     bool HandleNativeHudClickAtViewportPosition(const FVector2D& MousePosition, const FVector2D& ViewportSize);
+    bool HandleNativeChatKeyDown(const FKey& Key);
+    bool HandleNativeChatCharacter(TCHAR Character);
+    bool UseNativeQuickSlotHotkey(int32 Hotkey);
     void SetNativeKeyState(const FKey& Key, bool bIsDown);
     void SetNativeMouseButtonState(const FKey& Key, bool bIsDown);
     void UpdateNativeCursorScreenPosition(const FVector2D& ScreenPosition);
@@ -63,6 +70,9 @@ private:
     void ToggleMenuPressed();
     void ResetNativeInputState();
     void RefreshNativeMovementFromKeys();
+    void BeginNativeChat();
+    bool SubmitNativeChat();
+    void CancelNativeChat();
     bool SendNativeRunInput(bool bConsumeJump);
     bool SyncActorToServerPlayer();
     FVector ResolveAimWorld() const;
@@ -91,6 +101,10 @@ private:
     bool bUseNativeRenderer = false;
     bool bUseNative3DView = false;
     bool bNativeRunMenuOpen = false;
+    bool bNativeStatsPanelOpen = false;
+    bool bNativePlayersPanelOpen = false;
+    bool bNativeChatOpen = false;
+    FString NativeChatDraft;
     float MoveForwardValue = 0.0f;
     float MoveRightValue = 0.0f;
     bool bShooting = false;

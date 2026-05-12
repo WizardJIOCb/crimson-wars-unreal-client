@@ -45,6 +45,11 @@ public:
             return true;
         }
 
+        if (Pawn->HandleNativeChatKeyDown(Key))
+        {
+            return true;
+        }
+
         if (Pawn->IsNativeRunMenuOpen())
         {
             if (Key == EKeys::Escape)
@@ -56,6 +61,18 @@ public:
 
         if (Pawn->IsNativeRunInputActive())
         {
+            if (Key == EKeys::One || Key == EKeys::NumPadOne)
+            {
+                return Pawn->UseNativeQuickSlotHotkey(1);
+            }
+            if (Key == EKeys::Two || Key == EKeys::NumPadTwo)
+            {
+                return Pawn->UseNativeQuickSlotHotkey(2);
+            }
+            if (Key == EKeys::Three || Key == EKeys::NumPadThree)
+            {
+                return Pawn->UseNativeQuickSlotHotkey(3);
+            }
             Pawn->SetNativeKeyState(Key, true);
             if (Key == EKeys::W || Key == EKeys::A || Key == EKeys::S || Key == EKeys::D || Key == EKeys::SpaceBar)
             {
@@ -71,7 +88,7 @@ public:
         ACWNativePlayerPawn* Pawn = Owner.Get();
         if (!Pawn || !Pawn->IsNativeRunInputActive())
         {
-            return false;
+            return Pawn && Pawn->IsNativeChatOpen();
         }
 
         const FKey Key = InKeyEvent.GetKey();
@@ -287,7 +304,161 @@ void ACWNativePlayerPawn::ApplyNativeRunInputMode(APlayerController* PC)
 
 bool ACWNativePlayerPawn::IsNativeRunInputActive() const
 {
-    return bUseNativeRenderer && !bNativeRunMenuOpen && (!WebMenuWidget || !WebMenuWidget->IsMenuShown());
+    return bUseNativeRenderer && !bNativeRunMenuOpen && !bNativeChatOpen && (!WebMenuWidget || !WebMenuWidget->IsMenuShown());
+}
+
+void ACWNativePlayerPawn::BeginNativeChat()
+{
+    if (!bUseNativeRenderer || bNativeRunMenuOpen || (WebMenuWidget && WebMenuWidget->IsMenuShown()))
+    {
+        return;
+    }
+
+    ResetNativeInputState();
+    bNativeStatsPanelOpen = false;
+    bNativePlayersPanelOpen = false;
+    bNativeChatOpen = true;
+}
+
+bool ACWNativePlayerPawn::SubmitNativeChat()
+{
+    if (!bNativeChatOpen)
+    {
+        return false;
+    }
+
+    FString Text = NativeChatDraft;
+    Text.TrimStartAndEndInline();
+    if (!Text.IsEmpty())
+    {
+        if (UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>())
+        {
+            GI->SendChatMessage(Text);
+        }
+    }
+
+    NativeChatDraft.Reset();
+    bNativeChatOpen = false;
+    ResetNativeInputState();
+    return true;
+}
+
+void ACWNativePlayerPawn::CancelNativeChat()
+{
+    NativeChatDraft.Reset();
+    bNativeChatOpen = false;
+    ResetNativeInputState();
+}
+
+bool ACWNativePlayerPawn::HandleNativeChatKeyDown(const FKey& Key)
+{
+    if (!bUseNativeRenderer || (WebMenuWidget && WebMenuWidget->IsMenuShown()))
+    {
+        return false;
+    }
+
+    if (bNativeRunMenuOpen)
+    {
+        return false;
+    }
+
+    if (!bNativeChatOpen)
+    {
+        if (Key == EKeys::Enter)
+        {
+            BeginNativeChat();
+            return true;
+        }
+        return false;
+    }
+
+    if (Key == EKeys::Enter)
+    {
+        return SubmitNativeChat();
+    }
+    if (Key == EKeys::Escape)
+    {
+        CancelNativeChat();
+        return true;
+    }
+    if (Key == EKeys::BackSpace)
+    {
+        if (!NativeChatDraft.IsEmpty())
+        {
+            NativeChatDraft.LeftChopInline(1);
+        }
+        return true;
+    }
+    if (Key == EKeys::Delete)
+    {
+        NativeChatDraft.Reset();
+        return true;
+    }
+
+    return false;
+}
+
+bool ACWNativePlayerPawn::HandleNativeChatCharacter(TCHAR Character)
+{
+    if (!bNativeChatOpen || bNativeRunMenuOpen || (WebMenuWidget && WebMenuWidget->IsMenuShown()))
+    {
+        return false;
+    }
+
+    if (Character < TCHAR(' ') || Character == 127)
+    {
+        return true;
+    }
+
+    if (NativeChatDraft.Len() < 180)
+    {
+        NativeChatDraft.AppendChar(Character);
+    }
+    return true;
+}
+
+bool ACWNativePlayerPawn::UseNativeQuickSlotHotkey(int32 Hotkey)
+{
+    if (!IsNativeRunInputActive())
+    {
+        return false;
+    }
+
+    const UCWNativeGameInstance* ConstGI = GetGameInstance<UCWNativeGameInstance>();
+    UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
+    if (!ConstGI || !GI)
+    {
+        return false;
+    }
+
+    const FString MyId = ConstGI->MyId;
+    const FCWPlayerSnapshot* Me = nullptr;
+    for (const FCWPlayerSnapshot& Player : ConstGI->LatestState.Players)
+    {
+        if ((!MyId.IsEmpty() && Player.Id == MyId) || (!Me && !Player.bIsCompanion))
+        {
+            Me = &Player;
+            if (!MyId.IsEmpty() && Player.Id == MyId)
+            {
+                break;
+            }
+        }
+    }
+    if (!Me)
+    {
+        return false;
+    }
+
+    for (const FCWQuickSlotSnapshot& QuickSlot : Me->QuickSlots)
+    {
+        if (QuickSlot.Hotkey == Hotkey && !QuickSlot.bEmpty && !QuickSlot.SlotKey.IsEmpty())
+        {
+            GI->SendUseQuickItem(QuickSlot.SlotKey);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool ACWNativePlayerPawn::HandleNativeHudClickAtMouse()
@@ -391,6 +562,9 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
     const FVector2D PlayersPos(ViewportSize.X - 142.0f, 18.0f);
     const FVector2D NativePos(ViewportSize.X - 122.0f, ViewportSize.Y - 74.0f);
     const FVector2D ChatPos(14.0f, FMath::Max(MapPos.Y + MiniMapSize + 46.0f, ViewportSize.Y - 158.0f));
+    const FVector2D PlayersPlusPos = PlayersPos + FVector2D(92.0f, 8.0f);
+    const FVector2D ChatSendPos = ChatPos + FVector2D(252.0f, 4.0f);
+    const FVector2D StatsButtonPos = NativePos + FVector2D(42.0f, 36.0f);
 
     if (bNativeRunMenuOpen)
     {
@@ -426,25 +600,159 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
         return true;
     }
 
-    if (InRect(MenuPos, FVector2D(66.0f, 30.0f)) || InRect(PlayersPos, FVector2D(122.0f, 42.0f)) || InRect(ChatPos, FVector2D(282.0f, 31.0f)))
+    if (InRect(MenuPos, FVector2D(66.0f, 30.0f)))
     {
+        NativeChatDraft.Reset();
+        bNativeChatOpen = false;
+        bNativeStatsPanelOpen = false;
+        bNativePlayersPanelOpen = false;
         ResetNativeInputState();
         ToggleMenuPressed();
+        return true;
+    }
+
+    if (InRect(PlayersPlusPos, FVector2D(22.0f, 22.0f)) || InRect(PlayersPos, FVector2D(122.0f, 42.0f)))
+    {
+        NativeChatDraft.Reset();
+        bNativeChatOpen = false;
+        bNativeStatsPanelOpen = false;
+        bNativePlayersPanelOpen = !bNativePlayersPanelOpen;
+        ResetNativeInputState();
+        return true;
+    }
+
+    if (bNativePlayersPanelOpen)
+    {
+        const FVector2D PanelSize(300.0f, FMath::Clamp(ViewportSize.Y * 0.34f, 210.0f, 330.0f));
+        const FVector2D PanelPos(ViewportSize.X - PanelSize.X - 20.0f, 70.0f);
+        if (InRect(PanelPos + FVector2D(PanelSize.X - 34.0f, 10.0f), FVector2D(24.0f, 24.0f)))
+        {
+            bNativePlayersPanelOpen = false;
+            ResetNativeInputState();
+            return true;
+        }
+        if (InRect(PanelPos, PanelSize))
+        {
+            ResetNativeInputState();
+            return true;
+        }
+    }
+
+    if (InRect(ChatPos, FVector2D(282.0f, 31.0f)))
+    {
+        if (InRect(ChatSendPos, FVector2D(24.0f, 23.0f)) && bNativeChatOpen)
+        {
+            SubmitNativeChat();
+        }
+        else
+        {
+            BeginNativeChat();
+        }
         return true;
     }
 
     if (InRect(NativePos, FVector2D(106.0f, 30.0f)))
     {
+        NativeChatDraft.Reset();
+        bNativeChatOpen = false;
+        bNativeStatsPanelOpen = false;
+        bNativePlayersPanelOpen = false;
         ResetNativeInputState();
         HandleGlobalF10Pressed();
         return true;
     }
 
-    if (InRect(NativePos + FVector2D(42.0f, 36.0f), FVector2D(64.0f, 30.0f)))
+    if (InRect(StatsButtonPos, FVector2D(64.0f, 30.0f)))
     {
+        NativeChatDraft.Reset();
+        bNativeChatOpen = false;
+        bNativePlayersPanelOpen = false;
+        bNativeStatsPanelOpen = !bNativeStatsPanelOpen;
         ResetNativeInputState();
-        ToggleMenuPressed();
         return true;
+    }
+
+    if (bNativeStatsPanelOpen)
+    {
+        const FVector2D PanelSize(330.0f, 250.0f);
+        const FVector2D PanelPos(ViewportSize.X - PanelSize.X - 20.0f, ViewportSize.Y - PanelSize.Y - 112.0f);
+        if (InRect(PanelPos + FVector2D(PanelSize.X - 34.0f, 10.0f), FVector2D(24.0f, 24.0f)))
+        {
+            bNativeStatsPanelOpen = false;
+            ResetNativeInputState();
+            return true;
+        }
+        if (InRect(PanelPos, PanelSize))
+        {
+            ResetNativeInputState();
+            return true;
+        }
+    }
+
+    const UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
+    const FCWRoomSnapshot* State = GI ? &GI->LatestState : nullptr;
+    const FString MyId = GI ? GI->MyId : FString();
+    const FCWPlayerSnapshot* Me = nullptr;
+    if (State)
+    {
+        for (const FCWPlayerSnapshot& Player : State->Players)
+        {
+            if ((!MyId.IsEmpty() && Player.Id == MyId) || (!Me && !Player.bIsCompanion))
+            {
+                Me = &Player;
+                if (!MyId.IsEmpty() && Player.Id == MyId)
+                {
+                    break;
+                }
+            }
+        }
+    }
+    if (Me)
+    {
+        int32 ActiveCount = 0;
+        for (const FCWSkillSnapshot& Skill : Me->Skills)
+        {
+            if (Skill.Kind.Equals(TEXT("active"), ESearchCase::IgnoreCase))
+            {
+                ++ActiveCount;
+            }
+        }
+        if (ActiveCount == 0)
+        {
+            ActiveCount = 4;
+        }
+
+        TArray<FCWQuickSlotSnapshot> QuickSlots = Me->QuickSlots;
+        for (int32 Hotkey = QuickSlots.Num() + 1; Hotkey <= 3; ++Hotkey)
+        {
+            FCWQuickSlotSnapshot EmptySlot;
+            EmptySlot.Hotkey = Hotkey;
+            EmptySlot.bEmpty = true;
+            QuickSlots.Add(EmptySlot);
+        }
+
+        const float XpPanelW = FMath::Min(760.0f, FMath::Max(460.0f, ViewportSize.X * 0.38f));
+        const FVector2D XpPos((ViewportSize.X - XpPanelW) * 0.5f, ViewportSize.Y - 68.0f);
+        const float SlotW = 56.0f;
+        const float SlotGap = 8.0f;
+        const int32 QuickCount = QuickSlots.Num();
+        const int32 PrimaryCount = FMath::Max(1, ActiveCount + QuickCount);
+        const float PrimaryW = PrimaryCount * SlotW + (PrimaryCount - 1) * SlotGap;
+        const float SkillY = XpPos.Y - 152.0f;
+        float SlotX = (ViewportSize.X - PrimaryW) * 0.5f + ActiveCount * (SlotW + SlotGap);
+        for (const FCWQuickSlotSnapshot& QuickSlot : QuickSlots)
+        {
+            if (InRect(FVector2D(SlotX, SkillY), FVector2D(56.0f, 62.0f)))
+            {
+                if (!QuickSlot.bEmpty && QuickSlot.Hotkey > 0)
+                {
+                    UseNativeQuickSlotHotkey(QuickSlot.Hotkey);
+                }
+                ResetNativeInputState();
+                return true;
+            }
+            SlotX += SlotW + SlotGap;
+        }
     }
 
     return false;
@@ -526,11 +834,19 @@ void ACWNativePlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 
 void ACWNativePlayerPawn::MoveForward(float Value)
 {
+    if (bNativeChatOpen || bNativeRunMenuOpen)
+    {
+        return;
+    }
     MoveForwardValue = Value;
 }
 
 void ACWNativePlayerPawn::MoveRight(float Value)
 {
+    if (bNativeChatOpen || bNativeRunMenuOpen)
+    {
+        return;
+    }
     MoveRightValue = Value;
 }
 
@@ -712,6 +1028,10 @@ void ACWNativePlayerPawn::ResetNativeInputState()
 
 void ACWNativePlayerPawn::FirePressed()
 {
+    if (bNativeChatOpen || bNativeRunMenuOpen)
+    {
+        return;
+    }
     bShooting = true;
     SendNativeRunInput(false);
     InputAccumulator = 0.0f;
@@ -719,6 +1039,10 @@ void ACWNativePlayerPawn::FirePressed()
 
 void ACWNativePlayerPawn::FireReleased()
 {
+    if (bNativeChatOpen || bNativeRunMenuOpen)
+    {
+        return;
+    }
     bShooting = false;
     SendNativeRunInput(false);
     InputAccumulator = 0.0f;
@@ -726,6 +1050,10 @@ void ACWNativePlayerPawn::FireReleased()
 
 void ACWNativePlayerPawn::JumpPressed()
 {
+    if (bNativeChatOpen || bNativeRunMenuOpen)
+    {
+        return;
+    }
     bJumpQueued = true;
 }
 
@@ -762,6 +1090,10 @@ void ACWNativePlayerPawn::ToggleMenuPressed()
         return;
     }
 
+    NativeChatDraft.Reset();
+    bNativeChatOpen = false;
+    bNativeStatsPanelOpen = false;
+    bNativePlayersPanelOpen = false;
     bNativeRunMenuOpen = !bNativeRunMenuOpen;
     ResetNativeInputState();
 }
@@ -837,6 +1169,10 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
     const bool bWasNativeRenderer = bUseNativeRenderer;
     bUseNativeRenderer = bEnableNativeRenderer;
     bUseNative3DView = bEnableNativeRenderer && bEnableNative3DView;
+    NativeChatDraft.Reset();
+    bNativeChatOpen = false;
+    bNativeStatsPanelOpen = false;
+    bNativePlayersPanelOpen = false;
     if (!bUseNativeRenderer)
     {
         bNativeRunMenuOpen = false;

@@ -275,6 +275,12 @@ public:
     void SendSkillPick(const FString& SkillId);
 
     UFUNCTION(BlueprintCallable, Category = "Crimson Wars|Network")
+    void SendUseQuickItem(const FString& SlotKey);
+
+    UFUNCTION(BlueprintCallable, Category = "Crimson Wars|Network")
+    void SendChatMessage(const FString& Text);
+
+    UFUNCTION(BlueprintCallable, Category = "Crimson Wars|Network")
     void SendNetPing();
 
     UFUNCTION(BlueprintCallable, Category = "Crimson Wars|Bootstrap")

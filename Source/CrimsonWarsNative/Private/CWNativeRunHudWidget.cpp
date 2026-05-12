@@ -299,6 +299,7 @@ void UCWNativeRunHudWidget::NativeConstruct()
     {
         AssetsRoot = GI->WebAssetsRoot;
         StateDelegateHandle = GI->OnStateReceived.AddUObject(this, &UCWNativeRunHudWidget::HandleStateReceived);
+        TextDelegateHandle = GI->OnTextMessage.AddUObject(this, &UCWNativeRunHudWidget::HandleTextMessage);
         CachedMyId = GI->MyId;
         UpdateFromState(GI->LatestState);
     }
@@ -317,6 +318,11 @@ void UCWNativeRunHudWidget::NativeDestruct()
         {
             GI->OnStateReceived.Remove(StateDelegateHandle);
             StateDelegateHandle.Reset();
+        }
+        if (TextDelegateHandle.IsValid())
+        {
+            GI->OnTextMessage.Remove(TextDelegateHandle);
+            TextDelegateHandle.Reset();
         }
     }
     Super::NativeDestruct();
@@ -486,6 +492,30 @@ FReply UCWNativeRunHudWidget::NativeOnMouseMove(const FGeometry& InGeometry, con
     return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
+FReply UCWNativeRunHudWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+    if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
+    {
+        if (Pawn->HandleNativeChatKeyDown(InKeyEvent.GetKey()))
+        {
+            return FReply::Handled();
+        }
+    }
+    return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
+FReply UCWNativeRunHudWidget::NativeOnKeyChar(const FGeometry& InGeometry, const FCharacterEvent& InCharacterEvent)
+{
+    if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
+    {
+        if (Pawn->HandleNativeChatCharacter(InCharacterEvent.GetCharacter()))
+        {
+            return FReply::Handled();
+        }
+    }
+    return Super::NativeOnKeyChar(InGeometry, InCharacterEvent);
+}
+
 void UCWNativeRunHudWidget::BuildHud()
 {
     if (!WidgetTree)
@@ -511,6 +541,28 @@ void UCWNativeRunHudWidget::BuildHud()
 void UCWNativeRunHudWidget::HandleStateReceived(const FCWRoomSnapshot& State)
 {
     UpdateFromState(State);
+}
+
+void UCWNativeRunHudWidget::HandleTextMessage(const FString& Type, const FString& Text)
+{
+    FString Line = Text;
+    Line.TrimStartAndEndInline();
+    if (Line.IsEmpty())
+    {
+        return;
+    }
+
+    if (Type != TEXT("chat"))
+    {
+        Line = FString::Printf(TEXT("[%s] %s"), *Type.Left(12), *Line);
+    }
+
+    ChatLines.Add(Line.Left(120));
+    if (ChatLines.Num() > 5)
+    {
+        ChatLines.RemoveAt(0, ChatLines.Num() - 5);
+    }
+    InvalidateLayoutAndVolatility();
 }
 
 void UCWNativeRunHudWidget::UpdateFromState(const FCWRoomSnapshot& State)
@@ -589,6 +641,7 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
             Me = &Player;
         }
     }
+    const ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
 
     const double NowMs = CachedState.ServerNowMs > 0.0 ? CachedState.ServerNowMs : FPlatformTime::Seconds() * 1000.0;
     const double StartedAt = CachedState.RoomStartedAt > 0.0 ? CachedState.RoomStartedAt : NowMs;
@@ -685,7 +738,7 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
     }
     DrawText(OutDrawElements, AllottedGeometry, TextLayer, PlayersPos + FVector2D(10.0f, 11.0f), FString::Printf(TEXT("Players: %d"), RealPlayers), 14.0f, FLinearColor(0.92f, 0.96f, 1.0f, 0.98f), true);
     DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 2, PlayersPos + FVector2D(92.0f, 8.0f), FVector2D(22.0f, 22.0f), FLinearColor(0.08f, 0.12f, 0.16f, 0.92f), FLinearColor(0.80f, 0.88f, 1.0f, 0.22f));
-    DrawText(OutDrawElements, AllottedGeometry, TextLayer + 1, PlayersPos + FVector2D(98.0f, 8.0f), TEXT("+"), 15.0f, FLinearColor(0.82f, 0.96f, 1.0f, 0.94f), true);
+    DrawText(OutDrawElements, AllottedGeometry, TextLayer + 1, PlayersPos + FVector2D(Pawn && Pawn->IsNativePlayersPanelOpen() ? 99.0f : 98.0f, 8.0f), Pawn && Pawn->IsNativePlayersPanelOpen() ? TEXT("-") : TEXT("+"), 15.0f, FLinearColor(0.82f, 0.96f, 1.0f, 0.94f), true);
 
     const float XpPanelW = FMath::Min(760.0f, FMath::Max(460.0f, Size.X * 0.38f));
     const FVector2D XpPos((Size.X - XpPanelW) * 0.5f, Size.Y - 68.0f);
@@ -865,11 +918,24 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         }
     }
 
+    const bool bChatOpen = Pawn && Pawn->IsNativeChatOpen();
+    const FString ChatDraft = Pawn ? Pawn->GetNativeChatDraft() : FString();
     const FVector2D ChatPos(14.0f, FMath::Max(MapPos.Y + MapSize.Y + 46.0f, Size.Y - 158.0f));
-    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, ChatPos, FVector2D(282.0f, 31.0f), FLinearColor(0.005f, 0.034f, 0.062f, 0.86f), FLinearColor(0.20f, 0.68f, 0.90f, 0.24f));
-    DrawText(OutDrawElements, AllottedGeometry, TextLayer, ChatPos + FVector2D(10.0f, 8.0f), TEXT("Enter chat. /mute nick"), 10.0f, FLinearColor(0.72f, 0.82f, 0.94f, 0.78f), false);
-    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 2, ChatPos + FVector2D(252.0f, 4.0f), FVector2D(24.0f, 23.0f), FLinearColor(0.02f, 0.12f, 0.18f, 0.92f), FLinearColor(0.20f, 0.80f, 1.0f, 0.38f));
-    DrawText(OutDrawElements, AllottedGeometry, TextLayer, ChatPos + FVector2D(258.0f, 7.0f), TEXT(">"), 12.0f, FLinearColor(0.64f, 0.94f, 1.0f, 0.96f), true);
+    const int32 VisibleChatLines = FMath::Min(ChatLines.Num(), 4);
+    for (int32 I = 0; I < VisibleChatLines; ++I)
+    {
+        const int32 LineIndex = ChatLines.Num() - VisibleChatLines + I;
+        const float Y = ChatPos.Y - static_cast<float>(VisibleChatLines - I) * 20.0f - 6.0f;
+        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, FVector2D(ChatPos.X, Y), FVector2D(318.0f, 18.0f), FLinearColor(0.004f, 0.020f, 0.034f, 0.62f), FLinearColor(0.20f, 0.68f, 0.90f, 0.12f));
+        DrawText(OutDrawElements, AllottedGeometry, TextLayer, FVector2D(ChatPos.X + 8.0f, Y + 3.0f), ChatLines[LineIndex], 9.0f, FLinearColor(0.78f, 0.90f, 1.0f, 0.88f), false);
+    }
+    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, ChatPos, FVector2D(282.0f, 31.0f), bChatOpen ? FLinearColor(0.008f, 0.060f, 0.090f, 0.94f) : FLinearColor(0.005f, 0.034f, 0.062f, 0.86f), bChatOpen ? FLinearColor(0.32f, 0.92f, 1.0f, 0.52f) : FLinearColor(0.20f, 0.68f, 0.90f, 0.24f));
+    const FString ChatText = bChatOpen
+        ? (ChatDraft.IsEmpty() ? TEXT("Type message...") : (ChatDraft + TEXT("|")))
+        : TEXT("Enter chat. /mute nick");
+    DrawText(OutDrawElements, AllottedGeometry, TextLayer, ChatPos + FVector2D(10.0f, 8.0f), ChatText.Left(42), 10.0f, bChatOpen ? FLinearColor(0.86f, 0.98f, 1.0f, 0.98f) : FLinearColor(0.72f, 0.82f, 0.94f, 0.78f), false);
+    DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 2, ChatPos + FVector2D(252.0f, 4.0f), FVector2D(24.0f, 23.0f), FLinearColor(0.02f, 0.12f, 0.18f, 0.92f), bChatOpen ? FLinearColor(0.42f, 1.0f, 0.72f, 0.60f) : FLinearColor(0.20f, 0.80f, 1.0f, 0.38f));
+    DrawText(OutDrawElements, AllottedGeometry, TextLayer, ChatPos + FVector2D(258.0f, 7.0f), TEXT(">"), 12.0f, bChatOpen ? FLinearColor(0.64f, 1.0f, 0.78f, 0.96f) : FLinearColor(0.64f, 0.94f, 1.0f, 0.96f), true);
 
     const FVector2D NativePos(Size.X - 122.0f, Size.Y - 74.0f);
     DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, NativePos, FVector2D(106.0f, 30.0f), FLinearColor(0.012f, 0.060f, 0.096f, 0.88f), FLinearColor(0.28f, 0.78f, 1.0f, 0.42f));
@@ -877,13 +943,80 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
     DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer, NativePos + FVector2D(42.0f, 36.0f), FVector2D(64.0f, 30.0f), FLinearColor(0.018f, 0.030f, 0.048f, 0.88f), FLinearColor(0.88f, 0.95f, 1.0f, 0.18f));
     DrawText(OutDrawElements, AllottedGeometry, TextLayer, NativePos + FVector2D(59.0f, 44.0f), TEXT("Stats"), 11.0f, FLinearColor(0.88f, 0.94f, 1.0f, 0.96f), true);
 
+    if (Pawn && Pawn->IsNativePlayersPanelOpen())
+    {
+        const FVector2D PanelSize(300.0f, FMath::Clamp(Size.Y * 0.34f, 210.0f, 330.0f));
+        const FVector2D PanelPos(Size.X - PanelSize.X - 20.0f, 70.0f);
+        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 10, PanelPos, PanelSize, FLinearColor(0.006f, 0.014f, 0.024f, 0.94f), FLinearColor(0.42f, 0.92f, 1.0f, 0.40f));
+        DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, PanelPos + FVector2D(16.0f, 12.0f), TEXT("PLAYERS"), 14.0f, FLinearColor(0.88f, 0.98f, 1.0f, 0.98f), true);
+        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 12, PanelPos + FVector2D(PanelSize.X - 34.0f, 10.0f), FVector2D(24.0f, 24.0f), FLinearColor(0.04f, 0.07f, 0.10f, 0.94f), FLinearColor(0.84f, 0.96f, 1.0f, 0.30f));
+        DrawText(OutDrawElements, AllottedGeometry, TextLayer + 9, PanelPos + FVector2D(PanelSize.X - 27.0f, 12.0f), TEXT("X"), 11.0f, FLinearColor(0.88f, 0.96f, 1.0f, 0.96f), true);
+
+        TArray<const FCWPlayerSnapshot*> Players;
+        for (const FCWPlayerSnapshot& Player : CachedState.Players)
+        {
+            if (!Player.bIsCompanion)
+            {
+                Players.Add(&Player);
+            }
+        }
+        Players.Sort([](const FCWPlayerSnapshot& A, const FCWPlayerSnapshot& B)
+        {
+            return A.Level > B.Level;
+        });
+
+        const int32 Count = FMath::Min(Players.Num(), 8);
+        for (int32 I = 0; I < Count; ++I)
+        {
+            const FCWPlayerSnapshot* Player = Players[I];
+            if (!Player)
+            {
+                continue;
+            }
+            const float RowY = PanelPos.Y + 44.0f + I * 30.0f;
+            const bool bMe = Me && Player->Id == Me->Id;
+            DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 12, FVector2D(PanelPos.X + 12.0f, RowY), FVector2D(PanelSize.X - 24.0f, 24.0f), bMe ? FLinearColor(0.04f, 0.16f, 0.20f, 0.74f) : FLinearColor(0.01f, 0.025f, 0.040f, 0.62f));
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 20.0f, RowY + 4.0f), Player->Name.IsEmpty() ? Player->Id.Left(16) : Player->Name.Left(16), 10.0f, bMe ? FLinearColor(0.80f, 1.0f, 0.88f, 0.98f) : FLinearColor(0.82f, 0.92f, 1.0f, 0.92f), true);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 140.0f, RowY + 4.0f), FString::Printf(TEXT("Lv%d  HP %.0f%%"), Player->Level, 100.0f * FMath::Clamp(Player->Hp / FMath::Max(1.0f, Player->MaxHp), 0.0f, 1.0f)), 9.0f, FLinearColor(0.74f, 0.88f, 1.0f, 0.86f), false);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 232.0f, RowY + 4.0f), FString::Printf(TEXT("%dms"), Player->NetPingMs), 9.0f, FLinearColor(0.58f, 0.96f, 1.0f, 0.82f), false);
+        }
+    }
+
+    if (Pawn && Pawn->IsNativeStatsPanelOpen())
+    {
+        const FVector2D PanelSize(330.0f, 250.0f);
+        const FVector2D PanelPos(Size.X - PanelSize.X - 20.0f, Size.Y - PanelSize.Y - 112.0f);
+        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 10, PanelPos, PanelSize, FLinearColor(0.006f, 0.014f, 0.024f, 0.95f), FLinearColor(0.90f, 0.96f, 1.0f, 0.34f));
+        DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, PanelPos + FVector2D(16.0f, 12.0f), TEXT("RUN STATS"), 14.0f, FLinearColor(0.92f, 0.98f, 1.0f, 0.98f), true);
+        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 12, PanelPos + FVector2D(PanelSize.X - 34.0f, 10.0f), FVector2D(24.0f, 24.0f), FLinearColor(0.04f, 0.07f, 0.10f, 0.94f), FLinearColor(0.84f, 0.96f, 1.0f, 0.30f));
+        DrawText(OutDrawElements, AllottedGeometry, TextLayer + 9, PanelPos + FVector2D(PanelSize.X - 27.0f, 12.0f), TEXT("X"), 11.0f, FLinearColor(0.88f, 0.96f, 1.0f, 0.96f), true);
+
+        const FString WeaponName = Me && !Me->WeaponLabel.IsEmpty() ? Me->WeaponLabel : (Me ? Me->WeaponKey : TEXT("-"));
+        const FString HeroName = Me ? (Me->Name.IsEmpty() ? Me->PlayerClass : Me->Name) : TEXT("-");
+        const float HpPct = Me ? 100.0f * FMath::Clamp(Me->Hp / FMath::Max(1.0f, Me->MaxHp), 0.0f, 1.0f) : 0.0f;
+        const float DodgePct = Me ? 100.0f * FMath::Clamp(static_cast<float>(Me->DodgeCharges) / FMath::Max(1.0f, static_cast<float>(Me->DodgeChargesMax)), 0.0f, 1.0f) : 0.0f;
+        TArray<FString> Rows;
+        Rows.Add(FString::Printf(TEXT("Hero: %s  Lv %d"), *HeroName.Left(24), Me ? Me->Level : 0));
+        Rows.Add(FString::Printf(TEXT("HP: %.0f / %.0f  (%.0f%%)"), Me ? Me->Hp : 0.0f, Me ? Me->MaxHp : 0.0f, HpPct));
+        Rows.Add(FString::Printf(TEXT("Weapon: %s"), *WeaponName.Left(26)));
+        Rows.Add(FString::Printf(TEXT("Ammo: %d / %d  Reserve %d"), Me ? Me->MagazineAmmo : 0, Me ? Me->MagazineSize : 0, Me ? Me->ReserveAmmo : 0));
+        Rows.Add(FString::Printf(TEXT("Dodge: %d/%d  %.0f%%"), Me ? Me->DodgeCharges : 0, Me ? Me->DodgeChargesMax : 0, DodgePct));
+        Rows.Add(FString::Printf(TEXT("Pickup: %.0f  Ping: %dms"), Me ? Me->PickupRadius : 0.0f, Me ? Me->NetPingMs : 0));
+        Rows.Add(FString::Printf(TEXT("Skills: %d  Quick items: %d"), Me ? Me->Skills.Num() : 0, Me ? Me->QuickSlots.Num() : 0));
+        Rows.Add(FString::Printf(TEXT("Enemies: %d  Pickups: %d"), CachedState.Enemies.Num(), CachedState.Drops.Num() + CachedState.XpOrbs.Num() + CachedState.SkillOrbs.Num()));
+        for (int32 I = 0; I < Rows.Num(); ++I)
+        {
+            const float RowY = PanelPos.Y + 48.0f + I * 23.0f;
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 18.0f, RowY), Rows[I], 10.0f, I < 2 ? FLinearColor(0.80f, 1.0f, 0.86f, 0.94f) : FLinearColor(0.76f, 0.88f, 1.0f, 0.88f), I == 0);
+        }
+    }
+
     if (!Me)
     {
         DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 8, FVector2D((Size.X - 330.0f) * 0.5f, Size.Y * 0.5f - 24.0f), FVector2D(330.0f, 48.0f), FLinearColor(0.014f, 0.024f, 0.038f, 0.82f), FLinearColor(0.50f, 0.84f, 1.0f, 0.28f));
         DrawText(OutDrawElements, AllottedGeometry, TextLayer + 6, FVector2D((Size.X - 280.0f) * 0.5f, Size.Y * 0.5f - 11.0f), TEXT("Connecting to Crimson Wars run..."), 16.0f, FLinearColor(0.78f, 0.92f, 1.0f, 0.96f), true);
     }
 
-    const ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
     if (Pawn && Pawn->IsNativeRunMenuOpen())
     {
         const int32 MenuLayer = TextLayer + 20;
@@ -892,8 +1025,8 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         DrawBox(OutDrawElements, AllottedGeometry, MenuLayer, FVector2D::ZeroVector, Size, FLinearColor(0.0f, 0.0f, 0.0f, 0.42f));
         DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 4, PanelPos, PanelSize, FLinearColor(0.010f, 0.018f, 0.030f, 0.97f), FLinearColor(0.22f, 0.84f, 1.0f, 0.46f));
         DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 6, PanelPos + FVector2D(0.0f, 0.0f), FVector2D(PanelSize.X, 54.0f), FLinearColor(0.02f, 0.10f, 0.14f, 0.62f));
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, PanelPos + FVector2D(28.0f, 16.0f), TEXT("RUN MENU"), 20.0f, FLinearColor(0.88f, 0.98f, 1.0f, 0.98f), true);
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, PanelPos + FVector2D(152.0f, 21.0f), TEXT("Native client"), 12.0f, FLinearColor(0.48f, 0.92f, 1.0f, 0.76f), true);
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, PanelPos + FVector2D(28.0f, 15.0f), TEXT("RUN MENU"), 19.0f, FLinearColor(0.88f, 0.98f, 1.0f, 0.98f), true);
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, PanelPos + FVector2D(178.0f, 21.0f), TEXT("Native client"), 11.0f, FLinearColor(0.48f, 0.92f, 1.0f, 0.76f), true);
 
         const FVector2D ClosePos = PanelPos + FVector2D(PanelSize.X - 48.0f, 18.0f);
         DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 8, ClosePos, FVector2D(30.0f, 30.0f), FLinearColor(0.04f, 0.07f, 0.10f, 0.96f), FLinearColor(0.84f, 0.96f, 1.0f, 0.30f));

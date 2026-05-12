@@ -615,6 +615,53 @@ void UCWNativeGameInstance::SendSkillPick(const FString& SkillId)
     SendJson(Payload);
 }
 
+void UCWNativeGameInstance::SendUseQuickItem(const FString& SlotKey)
+{
+    if (!IsSocketConnected() || MyId.IsEmpty())
+    {
+        return;
+    }
+
+    const FString CleanSlotKey = SlotKey.TrimStartAndEnd().ToLower();
+    if (CleanSlotKey.IsEmpty())
+    {
+        return;
+    }
+
+    TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("type"), TEXT("useQuickItem"));
+    Payload->SetStringField(TEXT("slotKey"), CleanSlotKey);
+    SendJson(Payload);
+}
+
+void UCWNativeGameInstance::SendChatMessage(const FString& Text)
+{
+    if (!IsSocketConnected() || MyId.IsEmpty())
+    {
+        return;
+    }
+
+    FString CleanText = Text;
+    CleanText.ReplaceInline(TEXT("\r"), TEXT(" "));
+    CleanText.ReplaceInline(TEXT("\n"), TEXT(" "));
+    CleanText.TrimStartAndEndInline();
+    if (CleanText.IsEmpty())
+    {
+        return;
+    }
+
+    if (CleanText.Len() > 180)
+    {
+        CleanText = CleanText.Left(180);
+        CleanText.TrimStartAndEndInline();
+    }
+
+    TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("type"), TEXT("chatSend"));
+    Payload->SetStringField(TEXT("text"), CleanText);
+    SendJson(Payload);
+}
+
 void UCWNativeGameInstance::SendNetPing()
 {
     if (!IsSocketConnected())
@@ -866,6 +913,17 @@ void UCWNativeGameInstance::HandleMessage(const FString& Message)
             Event.Radius = static_cast<float>(FMath::Max(0.0, CWNativeJson::GetNumber(EventObj, TEXT("radius"), 120.0)));
             Event.DurationMs = static_cast<float>(FMath::Max(0.0, CWNativeJson::GetNumber(EventObj, TEXT("durationMs"))));
             OnWorldFxReceived.Broadcast(Event);
+        }
+        return;
+    }
+
+    if (Type == TEXT("chat"))
+    {
+        const FString Name = CWNativeJson::GetString(Root, TEXT("name"), TEXT("Player"));
+        const FString Text = CWNativeJson::GetString(Root, TEXT("text"));
+        if (!Text.IsEmpty())
+        {
+            OnTextMessage.Broadcast(TEXT("chat"), FString::Printf(TEXT("%s: %s"), *Name.Left(24), *Text.Left(180)));
         }
         return;
     }
