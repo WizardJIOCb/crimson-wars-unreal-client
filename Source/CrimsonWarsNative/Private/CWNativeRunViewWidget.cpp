@@ -3933,6 +3933,18 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 20, P - FVector2D(0.0f, Radius * 0.20f * FirePop), FVector2D(Radius * (0.38f + FirePop * 0.32f), Radius * (0.30f + FirePop * 0.28f)), FLinearColor(1.0f, 0.74f, 0.12f, 0.66f * Heat));
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 21, P - FVector2D(0.0f, Radius * 0.25f * FirePop), FVector2D(Radius * (0.17f + FirePop * 0.14f), Radius * (0.15f + FirePop * 0.12f)), FLinearColor(1.0f, 0.96f, 0.70f, 0.72f * Heat));
 
+            const float FlashA = Heat * CWRunView::SmoothStep01(FMath::Clamp((0.72f - T) / 0.72f, 0.0f, 1.0f));
+            for (int32 I = 0; I < 14; ++I)
+            {
+                const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 283);
+                const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 293);
+                const float Angle = R0 * UE_PI * 2.0f + T * (0.22f + R1 * 0.18f);
+                const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+                const float Inner = Radius * (0.08f + R1 * 0.08f);
+                const float Outer = Radius * (0.38f + R1 * 0.54f) * (0.72f + Blast * 0.42f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 22, P + Ray * Inner, P + Ray * Outer, FLinearColor(1.0f, 0.62f, 0.15f, 0.20f * FlashA), 1.4f + R1 * 2.2f);
+            }
+
             for (int32 I = 0; I < 34; ++I)
             {
                 const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 301);
@@ -3941,21 +3953,47 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const float Angle = R0 * UE_PI * 2.0f;
                 const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
                 const float Flight = FMath::Clamp(T * (1.10f + R2 * 0.26f), 0.0f, 1.0f);
-                const float Travel = Radius * (0.18f + R1 * 1.05f) * Flight;
-                const float Lift = Radius * (0.08f + R0 * 0.20f) * FMath::Sin(Flight * UE_PI);
-                const FVector2D Ground = P + Ray * Travel + FVector2D(0.0f, Flight * Flight * Radius * 0.12f);
+                const float Travel = Radius * (0.12f + R1 * 0.88f) * Flight;
+                const float Lift = Radius * (0.16f + R2 * 0.34f) * FMath::Sin(Flight * UE_PI);
+                const FVector2D Ground = P + Ray * Travel + FVector2D(0.0f, Radius * (0.04f + R1 * 0.10f) * Flight);
                 const FVector2D Debris = Ground - FVector2D(0.0f, Lift);
                 const float DebrisA = A * (0.42f + R2 * 0.58f);
                 const FLinearColor DebrisColor = (I % 5 == 0)
                     ? FLinearColor(1.0f, 0.62f, 0.16f, 0.72f * DebrisA)
                     : FLinearColor(Chunk.R, Chunk.G, Chunk.B, 0.86f * DebrisA);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 22, P + Ray * Radius * 0.06f, Debris, I % 5 == 0 ? FLinearColor(1.0f, 0.36f, 0.06f, 0.22f * DebrisA) : FLinearColor(Dust.R, Dust.G, Dust.B, 0.18f * DebrisA), I % 6 == 0 ? 2.0f : 1.0f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 23, Debris, FVector2D((2.8f + R1 * 6.2f) * DebrisA, (2.2f + R0 * 4.2f) * DebrisA), DebrisColor);
+                const float ChunkW = (3.4f + R1 * 7.2f) * DebrisA;
+                const float ChunkH = (2.5f + R0 * 5.0f) * DebrisA;
+                DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 15, Ground + FVector2D(0.0f, 3.0f), FVector2D(ChunkW * (1.10f + Flight * 1.05f), ChunkH * 0.44f), FLinearColor(0.0f, 0.0f, 0.0f, 0.20f * DebrisA));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 23, Debris, FVector2D(ChunkW, ChunkH), DebrisColor);
+                if (I % 4 == 0)
+                {
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 22, Debris + FVector2D(0.0f, ChunkH * 0.25f), FVector2D(ChunkW * 1.55f, ChunkH * 0.78f), FLinearColor(Dust.R, Dust.G, Dust.B, 0.16f * DebrisA));
+                }
                 if (Flight > 0.58f && I % 3 == 0)
                 {
                     const float Smear = CWRunView::SmoothStep01((Flight - 0.58f) / 0.18f) * A;
                     DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 15, Ground + FVector2D(0.0f, 3.0f), FVector2D((6.0f + R1 * 15.0f) * Scale, (2.6f + R2 * 5.5f) * Scale), FLinearColor(Chunk.R, Chunk.G, Chunk.B, 0.26f * Smear));
                 }
+            }
+
+            for (int32 I = 0; I < 18; ++I)
+            {
+                const float R0 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 337);
+                const float R1 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 341);
+                const float R2 = CWRunView::UnitRand(Fx.Position, Fx.Radius, I, 347);
+                const float Spread = -0.82f + R0 * 1.64f;
+                const FVector2D Side(FMath::Sin(Spread), 0.0f);
+                const float RiseT = FMath::Clamp(T * (1.22f + R2 * 0.34f), 0.0f, 1.0f);
+                const float Rise = Radius * (0.22f + R1 * 0.46f) * FMath::Sin(RiseT * UE_PI);
+                const float Drift = Radius * (0.06f + R2 * 0.20f) * RiseT;
+                const FVector2D Ground = P + Side * Drift + FVector2D(0.0f, Radius * (0.04f + R0 * 0.05f));
+                const FVector2D Clod = Ground - FVector2D(0.0f, Rise);
+                const float ClodA = A * (0.36f + R2 * 0.42f);
+                const float ClodW = 4.8f + R1 * 9.5f;
+                const float ClodH = 3.4f + R2 * 7.0f;
+                DrawEllipse(OutDrawElements, AllottedGeometry, BackgroundLayer + 15, Ground + FVector2D(0.0f, 4.0f), FVector2D(ClodW * (1.30f + RiseT), ClodH * 0.38f), FLinearColor(0.0f, 0.0f, 0.0f, 0.18f * ClodA));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 24, Clod, FVector2D(ClodW, ClodH), FLinearColor(Chunk.R, Chunk.G, Chunk.B, 0.80f * ClodA));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 23, Clod + FVector2D(0.0f, ClodH * 0.55f), FVector2D(ClodW * 1.95f, ClodH * 1.05f), FLinearColor(Dust.R, Dust.G, Dust.B, 0.14f * ClodA));
             }
 
             for (int32 I = 0; I < (bMetal ? 26 : 18); ++I)
@@ -3964,7 +4002,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const float Spread = -0.92f + R0 * 1.84f;
                 const FVector2D Ray = (BackDir * FMath::Cos(Spread) + Perp * FMath::Sin(Spread)).GetSafeNormal();
                 const float Len = Radius * (0.20f + T * (0.78f + R0 * 0.34f));
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 24, P + Ray * Radius * 0.06f, P + Ray * Len, bMetal ? FLinearColor(0.72f, 0.96f, 1.0f, 0.58f * A) : FLinearColor(1.0f, 0.76f, 0.22f, 0.38f * A), bMetal ? 1.8f : 1.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 25, P + Ray * Radius * 0.12f, P + Ray * Len, bMetal ? FLinearColor(0.72f, 0.96f, 1.0f, 0.46f * A) : FLinearColor(1.0f, 0.76f, 0.22f, 0.22f * FlashA), bMetal ? 1.5f : 0.9f);
             }
 
             for (int32 I = 0; I < 20; ++I)
@@ -3979,8 +4017,10 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const FVector2D FlameRoot = P + Ray * Radius * (0.06f + R1 * 0.08f);
                 const FVector2D FlameTip = P + Ray * Radius * (0.16f + R1 * 0.62f) * FireFlight - FVector2D(0.0f, Rise);
                 const float FlameA = Heat * (0.28f + R2 * 0.44f);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 25, FlameRoot, FlameTip, FLinearColor(1.0f, 0.18f + R1 * 0.22f, 0.02f, FlameA), 2.2f + R2 * 3.0f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 26, FlameTip, FVector2D(5.0f + R1 * 11.0f, 4.0f + R2 * 8.0f), FLinearColor(1.0f, 0.78f, 0.24f, FlameA * 0.78f));
+                const FVector2D FlameMid = (FlameRoot + FlameTip) * 0.5f - FVector2D(0.0f, Radius * 0.03f * R2);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 26, FlameRoot, FVector2D(5.5f + R1 * 10.0f, 3.8f + R2 * 6.0f), FLinearColor(1.0f, 0.30f, 0.04f, FlameA * 0.42f));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 27, FlameMid, FVector2D(6.0f + R1 * 13.0f, 4.4f + R2 * 8.0f), FLinearColor(1.0f, 0.46f + R1 * 0.16f, 0.06f, FlameA * 0.52f));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 28, FlameTip, FVector2D(5.0f + R1 * 11.0f, 4.0f + R2 * 8.0f), FLinearColor(1.0f, 0.78f, 0.24f, FlameA * 0.70f));
             }
 
             for (int32 I = 0; I < 18; ++I)
