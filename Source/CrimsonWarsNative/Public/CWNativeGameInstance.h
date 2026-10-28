@@ -243,6 +243,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeBootstrapDelegate, const FCWNativeB
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeSkillFxDelegate, const FCWSkillFxEvent&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeMeleeFxDelegate, const FCWMeleeFxEvent&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeWorldFxDelegate, const FCWWorldFxEvent&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FCWNativeRunResultDelegate, const FCWNativeRunResultSnapshot&);
 
 UCLASS(Config = Game)
 class CRIMSONWARSNATIVE_API UCWNativeGameInstance : public UGameInstance
@@ -361,6 +362,7 @@ public:
     FCWNativeSkillFxDelegate OnSkillFxReceived;
     FCWNativeMeleeFxDelegate OnMeleeFxReceived;
     FCWNativeWorldFxDelegate OnWorldFxReceived;
+    FCWNativeRunResultDelegate OnRunResultReceived;
 
 private:
     void ApplyRuntimeDefaults();

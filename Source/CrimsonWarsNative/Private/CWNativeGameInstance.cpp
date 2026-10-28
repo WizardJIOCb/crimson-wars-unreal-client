@@ -153,6 +153,71 @@ namespace CWNativeJson
         return ValueNumber >= 0 ? FString::FromInt(ValueNumber) : TEXT("-");
     }
 
+    int32 GetInt(const TSharedPtr<FJsonObject>& Obj, const FString& Field, int32 DefaultValue = 0)
+    {
+        return FMath::Max(0, FMath::RoundToInt(GetNumber(Obj, Field, static_cast<double>(DefaultValue))));
+    }
+
+    FCWNativeRunResultSnapshot ParseRunResult(const TSharedPtr<FJsonObject>& Root, const FString& FallbackRoomCode, const FCWRoomSnapshot& LatestState)
+    {
+        const TSharedPtr<FJsonObject> Payload = GetObject(Root, TEXT("result")).IsValid() ? GetObject(Root, TEXT("result")) : Root;
+        FCWNativeRunResultSnapshot Result;
+        Result.bVisible = true;
+        Result.bVictory = GetBool(Payload, TEXT("victory"), GetString(Root, TEXT("type")) == TEXT("runComplete"));
+        Result.bFinalDeath = !Result.bVictory;
+        Result.Title = GetString(Payload, TEXT("headline"), GetString(Root, TEXT("title"), Result.bVictory ? TEXT("MISSION COMPLETE") : TEXT("RUN ENDED")));
+        Result.Message = GetString(Root, TEXT("message"), GetString(Payload, TEXT("message")));
+        Result.RoomCode = GetString(Payload, TEXT("roomCode"), FallbackRoomCode.IsEmpty() ? LatestState.RoomCode : FallbackRoomCode);
+        Result.GameMode = GetString(Payload, TEXT("gameMode"), LatestState.GameMode.IsEmpty() ? TEXT("normal") : LatestState.GameMode);
+        Result.HeroName = GetString(Payload, TEXT("heroName"), GetString(Payload, TEXT("playerName")));
+        Result.Score = GetInt(Payload, TEXT("score"));
+        Result.Kills = GetInt(Payload, TEXT("kills"));
+        Result.EnemyKills = GetInt(Payload, TEXT("enemyKills"), Result.Kills);
+        Result.BossKills = GetInt(Payload, TEXT("bossKills"));
+        Result.TeamEnemyKills = GetInt(Payload, TEXT("teamEnemyKills"), GetInt(Payload, TEXT("totalEnemyKills"), LatestState.TotalEnemyKills));
+        Result.TeamBossKills = GetInt(Payload, TEXT("teamBossKills"));
+        Result.TeamScore = GetInt(Payload, TEXT("teamScore"));
+        Result.PvpKills = GetInt(Payload, TEXT("pvpKills"));
+        Result.PvpDeaths = GetInt(Payload, TEXT("pvpDeaths"));
+        Result.Deaths = GetInt(Payload, TEXT("deaths"), Result.bVictory ? 0 : 1);
+        Result.HeroLevel = FMath::Max(1, GetInt(Payload, TEXT("heroLevel"), 1));
+        Result.HeroXp = GetInt(Payload, TEXT("heroXp"));
+        Result.HeroXpToNext = FMath::Max(1, GetInt(Payload, TEXT("heroXpToNext"), 1));
+        const double DurationSec = GetNumber(Payload, TEXT("durationSec"));
+        const double SurvivedSec = GetNumber(Payload, TEXT("survivedSec"), DurationSec);
+        Result.SurvivalSec = static_cast<float>(FMath::Max(0.0, GetNumber(Payload, TEXT("survivalSec"), SurvivedSec)));
+        Result.Survivors = GetInt(Payload, TEXT("survivors"));
+        Result.SquadSize = GetInt(Payload, TEXT("squadSize"));
+
+        if (Result.SquadSize <= 0 || Result.Survivors <= 0)
+        {
+            int32 SquadSize = 0;
+            int32 Survivors = 0;
+            for (const FCWPlayerSnapshot& Player : LatestState.Players)
+            {
+                if (Player.bIsCompanion)
+                {
+                    continue;
+                }
+                ++SquadSize;
+                if (Player.bAlive)
+                {
+                    ++Survivors;
+                }
+            }
+            if (Result.SquadSize <= 0)
+            {
+                Result.SquadSize = SquadSize;
+            }
+            if (Result.Survivors <= 0)
+            {
+                Result.Survivors = Survivors;
+            }
+        }
+
+        return Result;
+    }
+
     FCWNativeFxProfile ParseFxProfile(const TSharedPtr<FJsonObject>& Obj, const FString& FallbackKey)
     {
         FCWNativeFxProfile Profile;
@@ -919,6 +984,14 @@ void UCWNativeGameInstance::HandleMessage(const FString& Message)
         return;
     }
 
+    if (Type == TEXT("runComplete"))
+    {
+        FCWNativeRunResultSnapshot Result = CWNativeJson::ParseRunResult(Root, CurrentRoomCode, LatestState);
+        OnRunResultReceived.Broadcast(Result);
+        OnTextMessage.Broadcast(TEXT("runComplete"), Result.Title);
+        return;
+    }
+
     if (Type == TEXT("chat"))
     {
         const FString Name = CWNativeJson::GetString(Root, TEXT("name"), TEXT("Player"));
@@ -935,6 +1008,19 @@ void UCWNativeGameInstance::HandleMessage(const FString& Message)
         const FString Text = CWNativeJson::GetString(Root, TEXT("message"));
         UE_LOG(LogTemp, Display, TEXT("Crimson Wars native: %s %s"), *Type, *Text);
         OnTextMessage.Broadcast(Type, Text);
+        if (Type == TEXT("joinError")
+            && Text.Contains(TEXT("Native handoff"), ESearchCase::IgnoreCase)
+            && (!NativeHandoffToken.IsEmpty() || !NativeHandoffPlayerId.IsEmpty()))
+        {
+            NativeHandoffToken.Reset();
+            NativeHandoffPlayerId.Reset();
+            NativeHandoffPlayerAccountId = 0;
+            DefaultRoomCode.Reset();
+            CurrentRoomCode.Reset();
+            MyId.Reset();
+            UE_LOG(LogTemp, Display, TEXT("Crimson Wars native: expired native handoff cleared; creating a fresh native room."));
+            JoinRoom(TEXT(""), DefaultPlayerName, DefaultPlayerClass);
+        }
         return;
     }
 

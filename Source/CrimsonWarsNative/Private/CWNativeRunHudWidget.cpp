@@ -339,6 +339,7 @@ void UCWNativeRunHudWidget::NativeConstruct()
         AssetsRoot = GI->WebAssetsRoot;
         StateDelegateHandle = GI->OnStateReceived.AddUObject(this, &UCWNativeRunHudWidget::HandleStateReceived);
         TextDelegateHandle = GI->OnTextMessage.AddUObject(this, &UCWNativeRunHudWidget::HandleTextMessage);
+        RunResultDelegateHandle = GI->OnRunResultReceived.AddUObject(this, &UCWNativeRunHudWidget::HandleRunResultReceived);
         CachedMyId = GI->MyId;
         UpdateFromState(GI->LatestState);
     }
@@ -362,6 +363,11 @@ void UCWNativeRunHudWidget::NativeDestruct()
         {
             GI->OnTextMessage.Remove(TextDelegateHandle);
             TextDelegateHandle.Reset();
+        }
+        if (RunResultDelegateHandle.IsValid())
+        {
+            GI->OnRunResultReceived.Remove(RunResultDelegateHandle);
+            RunResultDelegateHandle.Reset();
         }
     }
     Super::NativeDestruct();
@@ -531,6 +537,25 @@ FReply UCWNativeRunHudWidget::NativeOnMouseMove(const FGeometry& InGeometry, con
     return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
+FReply UCWNativeRunHudWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
+    {
+        if (Pawn->IsNativeRunInputActive())
+        {
+            const FVector2D LocalMouse = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+            Pawn->UpdateNativeCursorScreenPosition(InMouseEvent.GetScreenSpacePosition());
+            Pawn->UpdateNativeCursorViewportPosition(LocalMouse, InGeometry.GetLocalSize());
+            if (Pawn->AdjustNativeCameraZoom(InMouseEvent.GetWheelDelta()))
+            {
+                return FReply::Handled();
+            }
+        }
+    }
+
+    return Super::NativeOnMouseWheel(InGeometry, InMouseEvent);
+}
+
 FReply UCWNativeRunHudWidget::NativeOnTouchStarted(const FGeometry& InGeometry, const FPointerEvent& InTouchEvent)
 {
     ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
@@ -611,6 +636,7 @@ FReply UCWNativeRunHudWidget::NativeOnTouchEnded(const FGeometry& InGeometry, co
 {
     if (ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn()))
     {
+        Pawn->EndNativeMenuDrag();
         ReleaseTouchPointer(Pawn, InTouchEvent.GetPointerIndex());
         return FReply::Handled();
     }
@@ -785,6 +811,82 @@ void UCWNativeRunHudWidget::HandleTextMessage(const FString& Type, const FString
     InvalidateLayoutAndVolatility();
 }
 
+void UCWNativeRunHudWidget::HandleRunResultReceived(const FCWNativeRunResultSnapshot& Result)
+{
+    ShowRunResult(Result);
+}
+
+void UCWNativeRunHudWidget::ShowRunResult(const FCWNativeRunResultSnapshot& Result)
+{
+    CurrentRunResult = Result;
+    CurrentRunResult.bVisible = true;
+    if (CurrentRunResult.Title.IsEmpty())
+    {
+        CurrentRunResult.Title = CurrentRunResult.bVictory ? TEXT("MISSION COMPLETE") : TEXT("RUN FAILED");
+    }
+    bRunResultVisible = true;
+    InvalidateLayoutAndVolatility();
+}
+
+void UCWNativeRunHudWidget::DismissRunResult()
+{
+    bRunResultVisible = false;
+    CurrentRunResult = FCWNativeRunResultSnapshot();
+    InvalidateLayoutAndVolatility();
+}
+
+FCWNativeRunResultSnapshot UCWNativeRunHudWidget::BuildDeathResultFromState(const FCWRoomSnapshot& State, const FCWPlayerSnapshot& Player) const
+{
+    FCWNativeRunResultSnapshot Result;
+    Result.bVisible = true;
+    Result.bVictory = false;
+    Result.bFinalDeath = true;
+    Result.Title = TEXT("RUN FAILED");
+    Result.Message = TEXT("Final death. Review the run stats or return to runs.");
+    Result.RoomCode = State.RoomCode;
+    Result.GameMode = State.GameMode.IsEmpty() ? TEXT("normal") : State.GameMode;
+    Result.HeroName = Player.Name.IsEmpty() ? Player.PlayerClass : Player.Name;
+    Result.Kills = FMath::Max(0, Player.Kills);
+    Result.Score = FMath::Max(0, Player.Score);
+    Result.EnemyKills = FMath::Max(0, Player.EnemyKills > 0 ? Player.EnemyKills : Player.Kills);
+    Result.BossKills = FMath::Max(0, Player.BossKills);
+    Result.TeamEnemyKills = FMath::Max(0, State.TotalEnemyKills);
+    Result.TeamBossKills = Result.BossKills;
+    Result.PvpKills = FMath::Max(0, Player.PvpKills);
+    Result.PvpDeaths = FMath::Max(0, Player.PvpDeaths);
+    Result.Deaths = FMath::Max(1, Player.Deaths);
+    Result.HeroLevel = FMath::Max(1, Player.Level);
+    Result.HeroXp = FMath::Max(0, Player.Xp);
+    Result.HeroXpToNext = FMath::Max(1, Player.XpToNext);
+
+    if (Result.Score <= 0)
+    {
+        Result.Score = Result.EnemyKills * 14 + Result.BossKills * 100 + Result.HeroLevel * 25 + Result.PvpKills * 250;
+    }
+
+    int32 SquadSize = 0;
+    int32 Survivors = 0;
+    for (const FCWPlayerSnapshot& Candidate : State.Players)
+    {
+        if (Candidate.bIsCompanion)
+        {
+            continue;
+        }
+        ++SquadSize;
+        if (Candidate.bAlive)
+        {
+            ++Survivors;
+        }
+    }
+    Result.SquadSize = SquadSize;
+    Result.Survivors = Survivors;
+
+    const double NowMs = State.ServerNowMs > 0.0 ? State.ServerNowMs : FPlatformTime::Seconds() * 1000.0;
+    const double StartedAt = State.RoomStartedAt > 0.0 ? State.RoomStartedAt : NowMs;
+    Result.SurvivalSec = static_cast<float>(FMath::Max(1.0, (NowMs - StartedAt) / 1000.0));
+    return Result;
+}
+
 void UCWNativeRunHudWidget::UpdateFromState(const FCWRoomSnapshot& State)
 {
     CachedState = State;
@@ -802,6 +904,23 @@ void UCWNativeRunHudWidget::UpdateFromState(const FCWRoomSnapshot& State)
                 break;
             }
         }
+    }
+
+    if (Me)
+    {
+        const bool bLocalAlive = Me->bAlive;
+        const bool bFinalDeath = !bLocalAlive && (Me->bIsOut || !Me->bCanRespawn);
+        if (bHasLocalAliveSample && bLastLocalAlive && bFinalDeath && !bRunResultVisible)
+        {
+            ShowRunResult(BuildDeathResultFromState(State, *Me));
+        }
+        bHasLocalAliveSample = true;
+        bLastLocalAlive = bLocalAlive;
+    }
+    else
+    {
+        bHasLocalAliveSample = false;
+        bLastLocalAlive = true;
     }
 
     if (RoomText)
@@ -1059,46 +1178,59 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
     auto DrawSkillSlot = [&](const FVector2D& Pos, const FString& Badge, const FString& LevelText, const FLinearColor& Color, const FLinearColor& Rarity, float CooldownPct, const FString& CooldownText, bool bSmall, const FSlateBrush* IconBrush)
     {
         const FVector2D S(bSmall ? 40.0f : 56.0f, bSmall ? 44.0f : 62.0f);
-        const float GlowA = bSmall ? 0.12f : 0.26f;
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 1, Pos - FVector2D(10.0f, 10.0f), S + FVector2D(20.0f, 20.0f), FLinearColor(Color.R, Color.G, Color.B, GlowA * 0.34f));
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 2, Pos - FVector2D(5.0f, 5.0f), S + FVector2D(10.0f, 10.0f), FLinearColor(Color.R, Color.G, Color.B, GlowA));
-        DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 4, Pos, S, FLinearColor(0.004f, 0.008f, 0.018f, 0.97f), FLinearColor(Rarity.R, Rarity.G, Rarity.B, bSmall ? 0.60f : 0.84f));
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 3, Pos + FVector2D(2.0f, 2.0f), FVector2D(S.X - 4.0f, 2.0f), FLinearColor(0.86f, 1.0f, 1.0f, 0.26f));
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 3, Pos + FVector2D(2.0f, S.Y - 4.0f), FVector2D(S.X - 4.0f, 2.0f), FLinearColor(Color.R, Color.G, Color.B, 0.64f));
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 4, Pos + FVector2D(4.0f, 4.0f), S - FVector2D(8.0f, 8.0f), FLinearColor(Color.R, Color.G, Color.B, bSmall ? 0.16f : 0.28f));
-        DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 5, Pos + FVector2D(8.0f, 10.0f), S - FVector2D(16.0f, bSmall ? 18.0f : 24.0f), FLinearColor(0.006f, 0.016f, 0.030f, 0.98f));
+        const FVector2D Center = Pos + S * 0.5f;
+        const float Radius = bSmall ? 20.0f : 29.0f;
+        const float Time = static_cast<float>(FMath::Fmod(FPlatformTime::Seconds(), 3600.0));
+        const float Pulse = 0.5f + 0.5f * FMath::Sin(Time * (bSmall ? 3.2f : 4.1f) + Pos.X * 0.017f);
+        const float GlowA = bSmall ? 0.16f : 0.34f;
+
+        DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 1, Center, Radius + (bSmall ? 9.0f : 14.0f), FLinearColor(Color.R, Color.G, Color.B, GlowA * 0.20f + Pulse * 0.04f), 18);
+        DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 2, Center, Radius + (bSmall ? 4.0f : 7.0f), FLinearColor(Color.R, Color.G, Color.B, GlowA * 0.24f), 18);
+        DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 3, Center, Radius, FLinearColor(0.004f, 0.010f, 0.022f, 0.98f), 20);
+        DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 4, Center + FVector2D(-Radius * 0.17f, -Radius * 0.22f), Radius * 0.74f, FLinearColor(Color.R, Color.G, Color.B, bSmall ? 0.16f : 0.23f), 16);
+        DrawCircle(OutDrawElements, AllottedGeometry, DetailLayer + 5, Center, Radius + 1.0f, FLinearColor(Rarity.R, Rarity.G, Rarity.B, bSmall ? 0.76f : 0.96f), bSmall ? 1.8f : 2.4f, 48);
+        DrawCircle(OutDrawElements, AllottedGeometry, DetailLayer + 6, Center, Radius - 5.0f, FLinearColor(Color.R, Color.G, Color.B, 0.40f + Pulse * 0.16f), bSmall ? 0.9f : 1.2f, 42);
+        for (int32 Spark = 0; Spark < (bSmall ? 3 : 5); ++Spark)
+        {
+            const float A = Time * (bSmall ? 1.7f : 2.2f) + Spark * UE_TWO_PI / static_cast<float>(bSmall ? 3 : 5) + Pos.Y * 0.009f;
+            const FVector2D SparkPos = Center + FVector2D(FMath::Cos(A), FMath::Sin(A)) * (Radius + (bSmall ? 6.0f : 9.0f));
+            DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 7, SparkPos, bSmall ? 1.7f : 2.3f, FLinearColor(Color.R, Color.G, Color.B, 0.48f + Pulse * 0.18f), 8);
+        }
         if (IconBrush)
         {
-            const FVector2D IconPos = Pos + FVector2D(bSmall ? 8.0f : 7.0f, bSmall ? 11.0f : 10.0f);
-            const FVector2D IconSize = S - FVector2D(bSmall ? 16.0f : 14.0f, bSmall ? 20.0f : 24.0f);
-            DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 6, IconPos - FVector2D(2.0f, 2.0f), IconSize + FVector2D(4.0f, 4.0f), FLinearColor(Color.R, Color.G, Color.B, 0.10f));
-            DrawTexture(OutDrawElements, AllottedGeometry, DetailLayer + 6, IconBrush, IconPos, IconSize, FLinearColor(1.04f, 1.04f, 1.04f, 0.98f));
-            DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 7, IconPos, FVector2D(IconSize.X, 1.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.12f));
+            const FVector2D IconSize = FVector2D(Radius * (bSmall ? 1.34f : 1.42f), Radius * (bSmall ? 1.34f : 1.42f));
+            const FVector2D IconPos = Center - IconSize * 0.5f;
+            DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 8, Center, Radius * 0.70f, FLinearColor(0.0f, 0.0f, 0.0f, 0.30f), 14);
+            DrawTexture(OutDrawElements, AllottedGeometry, DetailLayer + 9, IconBrush, IconPos + FVector2D(1.0f, 2.0f), IconSize, FLinearColor(0.0f, 0.0f, 0.0f, 0.24f));
+            DrawTexture(OutDrawElements, AllottedGeometry, DetailLayer + 10, IconBrush, IconPos, IconSize, FLinearColor(1.06f, 1.06f, 1.06f, 0.98f));
+            DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 11, Center + FVector2D(-Radius * 0.25f, -Radius * 0.33f), Radius * 0.24f, FLinearColor(1.0f, 1.0f, 1.0f, 0.16f), 8);
         }
         else
         {
-            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 1, Pos + FVector2D(bSmall ? 11.0f : 14.0f, bSmall ? 15.0f : 20.0f), Badge, bSmall ? 10.0f : 13.0f, FLinearColor(0.94f, 0.98f, 1.0f, 0.98f), true);
+            const float TextSize = bSmall ? 10.0f : 13.0f;
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 1, Center - FVector2D(TextSize * FMath::Max(1, Badge.Len()) * 0.28f, TextSize * 0.56f), Badge, TextSize, FLinearColor(0.94f, 0.98f, 1.0f, 0.98f), true);
         }
         if (!LevelText.IsEmpty())
         {
-            DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 6, Pos + FVector2D(2.0f, 2.0f), FVector2D(30.0f, 15.0f), FLinearColor(0.004f, 0.008f, 0.016f, 0.90f), FLinearColor(0.76f, 0.98f, 1.0f, 0.28f));
-            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 2, Pos + FVector2D(6.0f, 3.0f), LevelText, 8.0f, FLinearColor(0.84f, 0.92f, 1.0f, 0.98f), true);
+            const FVector2D LevelPos = Center + FVector2D(-Radius - 2.0f, -Radius - 1.0f);
+            DrawPanel(OutDrawElements, AllottedGeometry, PanelLayer + 6, LevelPos, FVector2D(30.0f, 15.0f), FLinearColor(0.004f, 0.008f, 0.016f, 0.90f), FLinearColor(0.76f, 0.98f, 1.0f, 0.28f));
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 2, LevelPos + FVector2D(4.0f, 3.0f), LevelText, 8.0f, FLinearColor(0.84f, 0.92f, 1.0f, 0.98f), true);
         }
         if (CooldownPct > 0.01f)
         {
-            const float OverlayH = (S.Y - 8.0f) * FMath::Clamp(CooldownPct, 0.0f, 1.0f);
-            DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 7, Pos + FVector2D(4.0f, S.Y - 4.0f - OverlayH), FVector2D(S.X - 8.0f, OverlayH), FLinearColor(0.0f, 0.0f, 0.0f, 0.52f));
+            DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 12, Center, Radius * 0.82f, FLinearColor(0.0f, 0.0f, 0.0f, 0.56f), 18);
+            DrawCircle(OutDrawElements, AllottedGeometry, DetailLayer + 13, Center, Radius * (0.82f - FMath::Clamp(CooldownPct, 0.0f, 1.0f) * 0.16f), FLinearColor(0.48f, 0.62f, 0.76f, 0.44f), 1.2f, 36);
             if (!CooldownText.IsEmpty())
             {
-                DrawText(OutDrawElements, AllottedGeometry, TextLayer + 3, Pos + FVector2D(S.X * 0.5f - 13.0f, S.Y * 0.5f - 7.0f), CooldownText, 9.0f, FLinearColor(0.96f, 0.98f, 1.0f, 0.96f), true);
+                DrawText(OutDrawElements, AllottedGeometry, TextLayer + 3, Center - FVector2D(13.0f, 7.0f), CooldownText, 9.0f, FLinearColor(0.96f, 0.98f, 1.0f, 0.96f), true);
             }
         }
         else
         {
-            DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 7, Pos + FVector2D(S.X - 9.0f, 5.0f), FVector2D(5.0f, 5.0f), FLinearColor(0.30f, 1.0f, 0.72f, 0.98f));
+            DrawDisc(OutDrawElements, AllottedGeometry, DetailLayer + 12, Center + FVector2D(Radius * 0.58f, -Radius * 0.58f), bSmall ? 2.5f : 3.4f, FLinearColor(0.30f, 1.0f, 0.72f, 0.98f), 8);
             if (!bSmall)
             {
-                DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 7, Pos + FVector2D(5.0f, S.Y - 8.0f), FVector2D(S.X - 10.0f, 2.0f), FLinearColor(0.14f, 1.0f, 0.94f, 0.72f));
+                DrawCircle(OutDrawElements, AllottedGeometry, DetailLayer + 13, Center, Radius + 5.0f, FLinearColor(0.14f, 1.0f, 0.94f, 0.44f), 1.2f, 48);
             }
         }
     };
@@ -1223,10 +1355,12 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
             }
             const float RowY = PanelPos.Y + 44.0f + I * 30.0f;
             const bool bMe = Me && Player->Id == Me->Id;
+            const float HpPercent = 100.0f * FMath::Clamp(Player->Hp / FMath::Max(1.0f, Player->MaxHp), 0.0f, 1.0f);
             DrawBox(OutDrawElements, AllottedGeometry, DetailLayer + 12, FVector2D(PanelPos.X + 12.0f, RowY), FVector2D(PanelSize.X - 24.0f, 24.0f), bMe ? FLinearColor(0.04f, 0.16f, 0.20f, 0.74f) : FLinearColor(0.01f, 0.025f, 0.040f, 0.62f));
-            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 20.0f, RowY + 4.0f), Player->Name.IsEmpty() ? Player->Id.Left(16) : Player->Name.Left(16), 10.0f, bMe ? FLinearColor(0.80f, 1.0f, 0.88f, 0.98f) : FLinearColor(0.82f, 0.92f, 1.0f, 0.92f), true);
-            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 140.0f, RowY + 4.0f), FString::Printf(TEXT("Lv%d  HP %.0f%%"), Player->Level, 100.0f * FMath::Clamp(Player->Hp / FMath::Max(1.0f, Player->MaxHp), 0.0f, 1.0f)), 9.0f, FLinearColor(0.74f, 0.88f, 1.0f, 0.86f), false);
-            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 232.0f, RowY + 4.0f), FString::Printf(TEXT("%dms"), Player->NetPingMs), 9.0f, FLinearColor(0.58f, 0.96f, 1.0f, 0.82f), false);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 20.0f, RowY + 4.0f), Player->Name.IsEmpty() ? Player->Id.Left(14) : Player->Name.Left(14), 10.0f, bMe ? FLinearColor(0.80f, 1.0f, 0.88f, 0.98f) : FLinearColor(0.82f, 0.92f, 1.0f, 0.92f), true);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 128.0f, RowY + 4.0f), FString::Printf(TEXT("K %d"), Player->Kills), 9.0f, FLinearColor(1.0f, 0.82f, 0.36f, 0.92f), true);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 174.0f, RowY + 4.0f), FString::Printf(TEXT("Lv%d  HP %.0f%%"), Player->Level, HpPercent), 9.0f, FLinearColor(0.74f, 0.88f, 1.0f, 0.86f), false);
+            DrawText(OutDrawElements, AllottedGeometry, TextLayer + 8, FVector2D(PanelPos.X + 252.0f, RowY + 4.0f), FString::Printf(TEXT("%dms"), Player->NetPingMs), 9.0f, FLinearColor(0.58f, 0.96f, 1.0f, 0.82f), false);
         }
     }
 
@@ -1265,6 +1399,69 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         DrawText(OutDrawElements, AllottedGeometry, TextLayer + 6, FVector2D((Size.X - 280.0f) * 0.5f, Size.Y * 0.5f - 11.0f), TEXT("Connecting to Crimson Wars run..."), 16.0f, FLinearColor(0.78f, 0.92f, 1.0f, 0.96f), true);
     }
 
+    if (bRunResultVisible && CurrentRunResult.bVisible)
+    {
+        const int32 ResultLayer = TextLayer + 28;
+        const FVector2D PanelSize(FMath::Clamp(Size.X * 0.44f, 520.0f, 720.0f), FMath::Clamp(Size.Y * 0.54f, 390.0f, 540.0f));
+        const FVector2D PanelPos((Size.X - PanelSize.X) * 0.5f, (Size.Y - PanelSize.Y) * 0.5f);
+        const FLinearColor Accent = CurrentRunResult.bVictory
+            ? FLinearColor(0.22f, 1.0f, 0.64f, 0.82f)
+            : FLinearColor(1.0f, 0.22f, 0.18f, 0.78f);
+        const FString Title = CurrentRunResult.Title.IsEmpty()
+            ? (CurrentRunResult.bVictory ? TEXT("MISSION COMPLETE") : TEXT("RUN FAILED"))
+            : CurrentRunResult.Title.Left(42);
+        const FString Message = CurrentRunResult.Message.IsEmpty()
+            ? (CurrentRunResult.bVictory ? TEXT("The run is complete.") : TEXT("Final death. Review the run stats."))
+            : CurrentRunResult.Message.Left(96);
+
+        DrawBox(OutDrawElements, AllottedGeometry, ResultLayer, FVector2D::ZeroVector, Size, FLinearColor(0.0f, 0.0f, 0.0f, 0.60f));
+        DrawPanel(OutDrawElements, AllottedGeometry, ResultLayer + 4, PanelPos, PanelSize, FLinearColor(0.006f, 0.012f, 0.022f, 0.98f), Accent);
+        DrawBox(OutDrawElements, AllottedGeometry, ResultLayer + 6, PanelPos, FVector2D(PanelSize.X, 62.0f), CurrentRunResult.bVictory ? FLinearColor(0.016f, 0.120f, 0.070f, 0.45f) : FLinearColor(0.140f, 0.020f, 0.028f, 0.48f));
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, PanelPos + FVector2D(28.0f, 16.0f), Title, 22.0f, FLinearColor(0.94f, 0.98f, 1.0f, 0.98f), true);
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, PanelPos + FVector2D(30.0f, 72.0f), Message, 12.0f, FLinearColor(0.74f, 0.86f, 0.96f, 0.90f), false);
+
+        const FVector2D SummaryPos = PanelPos + FVector2D(28.0f, 104.0f);
+        const FVector2D SummarySize(PanelSize.X - 56.0f, 74.0f);
+        DrawPanel(OutDrawElements, AllottedGeometry, ResultLayer + 7, SummaryPos, SummarySize, FLinearColor(0.010f, 0.026f, 0.040f, 0.84f), FLinearColor(0.50f, 0.92f, 1.0f, 0.24f));
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, SummaryPos + FVector2D(16.0f, 13.0f), FString::Printf(TEXT("Score %d"), FMath::Max(0, CurrentRunResult.Score)), 20.0f, CurrentRunResult.bVictory ? FLinearColor(0.78f, 1.0f, 0.82f, 0.98f) : FLinearColor(1.0f, 0.78f, 0.74f, 0.98f), true);
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, SummaryPos + FVector2D(16.0f, 45.0f), FString::Printf(TEXT("Room %s  |  Mode %s  |  Time %s"), *CurrentRunResult.RoomCode.Left(16), *CurrentRunResult.GameMode.Left(14), *FormatClock(CurrentRunResult.SurvivalSec)), 11.0f, FLinearColor(0.72f, 0.84f, 0.94f, 0.90f), true);
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, SummaryPos + FVector2D(SummarySize.X - 170.0f, 18.0f), FString::Printf(TEXT("Lv%d"), FMath::Max(1, CurrentRunResult.HeroLevel)), 18.0f, FLinearColor(1.0f, 0.86f, 0.42f, 0.98f), true);
+        DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, SummaryPos + FVector2D(SummarySize.X - 126.0f, 45.0f), CurrentRunResult.HeroName.Left(18), 10.0f, FLinearColor(0.72f, 0.92f, 1.0f, 0.84f), false);
+
+        auto DrawMetric = [&](int32 Index, const FString& Label, const FString& Value)
+        {
+            const int32 Column = Index % 2;
+            const int32 Row = Index / 2;
+            const float CellW = (PanelSize.X - 76.0f) * 0.5f;
+            const FVector2D Pos = PanelPos + FVector2D(28.0f + Column * (CellW + 20.0f), 198.0f + Row * 42.0f);
+            DrawBox(OutDrawElements, AllottedGeometry, ResultLayer + 7, Pos, FVector2D(CellW, 32.0f), FLinearColor(0.010f, 0.022f, 0.034f, 0.62f));
+            DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, Pos + FVector2D(10.0f, 4.0f), Label, 9.0f, FLinearColor(0.56f, 0.72f, 0.84f, 0.82f), false);
+            DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 12, Pos + FVector2D(CellW - 92.0f, 5.0f), Value.Left(18), 12.0f, FLinearColor(0.88f, 0.96f, 1.0f, 0.96f), true);
+        };
+
+        int32 MetricIndex = 0;
+        DrawMetric(MetricIndex++, TEXT("Kills"), FString::Printf(TEXT("%d"), FMath::Max(0, CurrentRunResult.Kills)));
+        DrawMetric(MetricIndex++, TEXT("Enemy kills"), FString::Printf(TEXT("%d"), FMath::Max(0, CurrentRunResult.EnemyKills)));
+        DrawMetric(MetricIndex++, TEXT("Boss kills"), FString::Printf(TEXT("%d"), FMath::Max(0, CurrentRunResult.BossKills)));
+        DrawMetric(MetricIndex++, TEXT("Team kills"), FString::Printf(TEXT("%d"), FMath::Max(0, CurrentRunResult.TeamEnemyKills)));
+        DrawMetric(MetricIndex++, TEXT("PvP"), FString::Printf(TEXT("%d / %d"), FMath::Max(0, CurrentRunResult.PvpKills), FMath::Max(0, CurrentRunResult.PvpDeaths)));
+        DrawMetric(MetricIndex++, TEXT("Deaths"), FString::Printf(TEXT("%d"), FMath::Max(0, CurrentRunResult.Deaths)));
+        DrawMetric(MetricIndex++, TEXT("Squad"), FString::Printf(TEXT("%d / %d"), FMath::Max(0, CurrentRunResult.Survivors), FMath::Max(0, CurrentRunResult.SquadSize)));
+        DrawMetric(MetricIndex++, TEXT("Combat XP"), FString::Printf(TEXT("%d / %d"), FMath::Max(0, CurrentRunResult.HeroXp), FMath::Max(1, CurrentRunResult.HeroXpToNext)));
+
+        auto DrawResultButton = [&](const FVector2D& Pos, const FVector2D& ButtonSize, const FString& Label, const FLinearColor& ButtonAccent, bool bDanger)
+        {
+            DrawPanel(OutDrawElements, AllottedGeometry, ResultLayer + 9, Pos, ButtonSize, bDanger ? FLinearColor(0.14f, 0.024f, 0.030f, 0.96f) : FLinearColor(0.018f, 0.050f, 0.068f, 0.96f), ButtonAccent);
+            DrawBox(OutDrawElements, AllottedGeometry, ResultLayer + 11, Pos + FVector2D(1.0f, 1.0f), FVector2D(ButtonSize.X - 2.0f, 2.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.08f));
+            DrawText(OutDrawElements, AllottedGeometry, ResultLayer + 13, Pos + FVector2D(18.0f, 11.0f), Label, 13.0f, bDanger ? FLinearColor(1.0f, 0.76f, 0.74f, 0.98f) : FLinearColor(0.88f, 0.98f, 1.0f, 0.98f), true);
+        };
+        const FVector2D WatchPos = PanelPos + FVector2D(28.0f, PanelSize.Y - 74.0f);
+        const FVector2D RunsPos = PanelPos + FVector2D(PanelSize.X - 186.0f, PanelSize.Y - 74.0f);
+        DrawResultButton(WatchPos, FVector2D(156.0f, 42.0f), TEXT("Watch field"), FLinearColor(0.22f, 0.94f, 1.0f, 0.44f), false);
+        DrawResultButton(RunsPos, FVector2D(158.0f, 42.0f), TEXT("Back to runs"), CurrentRunResult.bVictory ? FLinearColor(0.22f, 1.0f, 0.64f, 0.52f) : FLinearColor(1.0f, 0.22f, 0.18f, 0.52f), !CurrentRunResult.bVictory);
+        return ResultLayer + 40;
+    }
+
     if (Pawn && Pawn->IsNativeRunMenuOpen())
     {
         const int32 MenuLayer = TextLayer + 20;
@@ -1294,11 +1491,87 @@ int32 UCWNativeRunHudWidget::NativePaint(const FPaintArgs& Args, const FGeometry
         DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 9, HpBarPos, FVector2D(140.0f, 12.0f), FLinearColor(0.0f, 0.0f, 0.0f, 0.70f));
         DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 10, HpBarPos + FVector2D(1.0f, 1.0f), FVector2D(138.0f * HpPct, 10.0f), FLinearColor(0.34f, 1.0f, 0.32f, 0.88f));
 
-        const FVector2D ControlsPos = PanelPos + FVector2D(28.0f, 226.0f);
-        DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 7, ControlsPos, FVector2D(PanelSize.X - 56.0f, PanelSize.Y - 330.0f), FLinearColor(0.006f, 0.014f, 0.024f, 0.86f), FLinearColor(0.74f, 0.92f, 1.0f, 0.18f));
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 14.0f), TEXT("Controls"), 15.0f, FLinearColor(0.84f, 0.94f, 1.0f, 0.96f), true);
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 42.0f), TEXT("WASD move     Mouse aim/shoot     Space dodge     Enter chat"), 12.0f, FLinearColor(0.70f, 0.82f, 0.92f, 0.90f), false);
-        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, ControlsPos + FVector2D(18.0f, 68.0f), TEXT("Run is rendered only by the native UE client."), 12.0f, FLinearColor(0.44f, 0.90f, 1.0f, 0.82f), true);
+        const FVector2D SettingsPos = PanelPos + FVector2D(28.0f, 226.0f);
+        const FVector2D SettingsSize(PanelSize.X - 56.0f, PanelSize.Y - 318.0f);
+        DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 7, SettingsPos, SettingsSize, FLinearColor(0.006f, 0.014f, 0.024f, 0.86f), FLinearColor(0.74f, 0.92f, 1.0f, 0.18f));
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, SettingsPos + FVector2D(18.0f, 12.0f), TEXT("Settings"), 15.0f, FLinearColor(0.84f, 0.94f, 1.0f, 0.96f), true);
+        DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, SettingsPos + FVector2D(112.0f, 16.0f), TEXT("WASD move  |  Mouse aim/shoot  |  Space dodge  |  Enter chat"), 9.0f, FLinearColor(0.60f, 0.76f, 0.88f, 0.84f), false);
+
+        struct FNativeMenuSettingDraw
+        {
+            const TCHAR* Id;
+            const TCHAR* Label;
+            bool bCheckbox;
+        };
+        const FNativeMenuSettingDraw Settings[] = {
+            { TEXT("graphics_quality"), TEXT("Graphics quality"), false },
+            { TEXT("shadows"), TEXT("Shadows"), true },
+            { TEXT("bullet_tracers"), TEXT("Bullet tracers"), true },
+            { TEXT("extra_blood"), TEXT("Extra blood"), true },
+            { TEXT("hit_effects"), TEXT("Hit effects"), true },
+            { TEXT("show_minimap"), TEXT("Show minimap"), true },
+            { TEXT("enemy_hp_bars"), TEXT("Enemy HP bars"), true },
+            { TEXT("show_companion_names"), TEXT("Ally bot names"), true },
+            { TEXT("show_companion_ammo"), TEXT("Ally bot ammo"), true },
+            { TEXT("connection_indicator"), TEXT("Connection indicator"), true },
+            { TEXT("show_fps"), TEXT("Show FPS"), true },
+            { TEXT("show_chat"), TEXT("Show chat"), true },
+            { TEXT("auto_fire"), TEXT("Auto fire"), true },
+            { TEXT("auto_aim"), TEXT("Auto aim"), true },
+            { TEXT("dynamic_sticks"), TEXT("Dynamic sticks"), true },
+            { TEXT("show_aim_stick"), TEXT("Show aim stick"), true },
+            { TEXT("game_sounds"), TEXT("Game sounds"), true },
+            { TEXT("sound_volume"), TEXT("Sound volume"), false },
+            { TEXT("show_commentator"), TEXT("Arena commentator"), true },
+            { TEXT("commentator_voice"), TEXT("Voice commentator"), true },
+            { TEXT("show_replay_player"), TEXT("Replay player"), true },
+            { TEXT("language"), TEXT("Language"), false }
+        };
+        auto DrawSettingRow = [&](const FVector2D& RowPos, const FNativeMenuSettingDraw& Setting)
+        {
+            const bool bOn = Pawn ? Pawn->GetNativeRunSettingEnabled(Setting.Id) : true;
+            const FString ValueLabel = Pawn ? Pawn->GetNativeRunSettingValueLabel(Setting.Id) : (Setting.bCheckbox ? TEXT("ON") : TEXT("--"));
+            const FLinearColor Accent = bOn ? FLinearColor(0.36f, 0.96f, 1.0f, 0.92f) : FLinearColor(0.34f, 0.43f, 0.50f, 0.78f);
+            DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 8, RowPos - FVector2D(5.0f, 1.0f), FVector2D(SettingsSize.X * 0.5f - 18.0f, 15.0f), FLinearColor(0.012f, 0.030f, 0.045f, 0.28f));
+            if (FString(Setting.Id) == TEXT("sound_volume"))
+            {
+                const float VolumePct = FMath::Clamp(static_cast<float>(Pawn ? Pawn->GetNativeSoundVolume() : 70) / 100.0f, 0.0f, 1.0f);
+                const float ColumnW = SettingsSize.X * 0.5f;
+                const float TrackW = FMath::Clamp(ColumnW - 156.0f, 72.0f, 128.0f);
+                const FVector2D TrackPos(RowPos.X + ColumnW - TrackW - 46.0f, RowPos.Y + 3.0f);
+                DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos, Setting.Label, 9.0f, FLinearColor(0.72f, 0.84f, 0.94f, 0.92f), false);
+                DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 10, TrackPos, FVector2D(TrackW, 8.0f), FLinearColor(0.006f, 0.017f, 0.026f, 0.94f), FLinearColor(0.26f, 0.44f, 0.54f, 0.74f));
+                DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 11, TrackPos + FVector2D(1.0f, 1.0f), FVector2D(FMath::Max(0.0f, TrackW - 2.0f) * VolumePct, 6.0f), FLinearColor(0.30f, 0.92f, 1.0f, 0.86f));
+                DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 12, FVector2D(TrackPos.X + TrackW * VolumePct - 4.0f, TrackPos.Y - 3.0f), FVector2D(8.0f, 14.0f), FLinearColor(0.72f, 0.98f, 1.0f, 0.96f), FLinearColor(0.12f, 0.48f, 0.60f, 0.92f));
+                DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos + FVector2D(ColumnW - 35.0f, -1.0f), ValueLabel, 9.0f, FLinearColor(0.82f, 0.98f, 1.0f, 0.96f), true);
+                return;
+            }
+            if (Setting.bCheckbox)
+            {
+                DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 10, RowPos, FVector2D(12.0f, 12.0f), FLinearColor(0.006f, 0.012f, 0.020f, 0.94f), Accent);
+                if (bOn)
+                {
+                    DrawBox(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos + FVector2D(3.0f, 3.0f), FVector2D(6.0f, 6.0f), Accent);
+                }
+                DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos + FVector2D(18.0f, -1.0f), Setting.Label, 9.0f, bOn ? FLinearColor(0.82f, 0.94f, 1.0f, 0.94f) : FLinearColor(0.52f, 0.64f, 0.72f, 0.82f), false);
+            }
+            else
+            {
+                DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos, Setting.Label, 9.0f, FLinearColor(0.72f, 0.84f, 0.94f, 0.92f), false);
+                DrawPanel(OutDrawElements, AllottedGeometry, MenuLayer + 10, RowPos + FVector2D(SettingsSize.X * 0.5f - 78.0f, -2.0f), FVector2D(58.0f, 15.0f), FLinearColor(0.018f, 0.048f, 0.066f, 0.92f), FLinearColor(0.30f, 0.88f, 1.0f, 0.34f));
+                DrawText(OutDrawElements, AllottedGeometry, MenuLayer + 12, RowPos + FVector2D(SettingsSize.X * 0.5f - 64.0f, -1.0f), ValueLabel, 9.0f, FLinearColor(0.82f, 0.98f, 1.0f, 0.96f), true);
+            }
+        };
+        constexpr int32 RowsPerColumn = 11;
+        const float ColumnW = SettingsSize.X * 0.5f;
+        const float RowH = 17.0f;
+        const FVector2D FirstRowPos = SettingsPos + FVector2D(18.0f, 54.0f);
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(Settings); ++Index)
+        {
+            const int32 Column = Index / RowsPerColumn;
+            const int32 Row = Index % RowsPerColumn;
+            DrawSettingRow(FirstRowPos + FVector2D(static_cast<float>(Column) * ColumnW, static_cast<float>(Row) * RowH), Settings[Index]);
+        }
 
         auto DrawMenuButton = [&](const FVector2D& Pos, const FVector2D& ButtonSize, const FString& Label, const FLinearColor& Accent, bool bDanger)
         {

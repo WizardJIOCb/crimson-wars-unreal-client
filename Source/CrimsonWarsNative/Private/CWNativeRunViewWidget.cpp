@@ -12,8 +12,10 @@
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/FileManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "Misc/Paths.h"
 #include "Rendering/DrawElements.h"
+#include "Sound/SoundBase.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/SViewport.h"
 
@@ -23,6 +25,13 @@ namespace CWRunView
     constexpr float DefaultWorldHeight = 2800.0f;
     constexpr float ViewWorldWidth = 2350.0f;
     constexpr float RoadHeight = 840.0f;
+    constexpr float CameraZoomMin = 0.70f;
+    constexpr float CameraZoomMax = 2.80f;
+
+    float ViewScale(float ViewportWidth, float CameraZoom)
+    {
+        return FMath::Clamp((ViewportWidth / ViewWorldWidth) * FMath::Clamp(CameraZoom, CameraZoomMin, CameraZoomMax), 0.30f, CameraZoomMax);
+    }
 
     float LocalAnimTime(float SeedPhase = 0.0f)
     {
@@ -111,7 +120,7 @@ namespace CWRunView
             Tint);
     }
 
-    void DrawTextureRegion(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FSlateBrush* Brush, const FVector2D& Position, const FVector2D& Size, const FVector2D& SourcePosition, const FVector2D& SourceSize, const FVector2D& TextureSize, const FLinearColor& Tint = FLinearColor::White)
+    void DrawTextureRegion(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FSlateBrush* Brush, const FVector2D& Position, const FVector2D& Size, const FVector2D& SourcePosition, const FVector2D& SourceSize, const FVector2D& TextureSize, const FLinearColor& Tint = FLinearColor::White, bool bFlipX = false)
     {
         if (!Brush || TextureSize.X <= 0.0f || TextureSize.Y <= 0.0f || SourceSize.X <= 0.0f || SourceSize.Y <= 0.0f)
         {
@@ -122,7 +131,15 @@ namespace CWRunView
         RegionBrush.SetUVRegion(FBox2f(
             FVector2f(SourcePosition.X / TextureSize.X, SourcePosition.Y / TextureSize.Y),
             FVector2f((SourcePosition.X + SourceSize.X) / TextureSize.X, (SourcePosition.Y + SourceSize.Y) / TextureSize.Y)));
-        DrawTexture(OutDrawElements, Geometry, LayerId, &RegionBrush, Position, Size, Tint);
+        FSlateDrawElement::MakeBox(
+            OutDrawElements,
+            LayerId,
+            bFlipX
+                ? Geometry.ToPaintGeometry(Size, FSlateLayoutTransform(Position), FSlateRenderTransform(FScale2D(-1.0f, 1.0f)))
+                : PaintGeometry(Geometry, Position, Size),
+            &RegionBrush,
+            ESlateDrawEffect::None,
+            Tint);
     }
 
     void DrawCenteredBox(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Center, const FVector2D& Size, const FLinearColor& Color)
@@ -206,6 +223,90 @@ namespace CWRunView
         }
     }
 
+    void DrawArc(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Center, float Radius, float StartRadians, float EndRadians, const FLinearColor& Color, float Thickness)
+    {
+        const float Sweep = EndRadians - StartRadians;
+        if (Radius <= 1.0f || Sweep <= 0.001f)
+        {
+            return;
+        }
+
+        const int32 Segments = FMath::Clamp(FMath::CeilToInt(Sweep * Radius * 0.42f), 4, 32);
+        TArray<FVector2D> Points;
+        Points.Reserve(Segments + 1);
+        for (int32 I = 0; I <= Segments; ++I)
+        {
+            const float T = static_cast<float>(I) / static_cast<float>(Segments);
+            const float A = FMath::Lerp(StartRadians, EndRadians, T);
+            Points.Add(Center + FVector2D(FMath::Cos(A) * Radius, FMath::Sin(A) * Radius));
+        }
+
+        FSlateDrawElement::MakeLines(
+            OutDrawElements,
+            LayerId,
+            Geometry.ToPaintGeometry(),
+            Points,
+            ESlateDrawEffect::None,
+            Color,
+            true,
+            Thickness);
+    }
+
+    void DrawJumpChargeIndicators(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FCWPlayerSnapshot& Player, const FVector2D& Center, const FLinearColor& Accent)
+    {
+        if (!Player.bAlive)
+        {
+            return;
+        }
+
+        const int32 MaxCharges = FMath::Clamp(Player.DodgeChargesMax, 1, 8);
+        const int32 Charges = FMath::Clamp(Player.DodgeCharges, 0, MaxCharges);
+        const float RechargeLeftMs = FMath::Max(0.0f, Player.DodgeRechargeMs);
+        const float RechargeTotalMs = FMath::Max(1.0f, Player.DodgeRechargeTotalMs);
+        const bool bRecharging = Charges < MaxCharges && RechargeLeftMs > 0.0f;
+        const int32 RechargeIndex = bRecharging ? Charges : INDEX_NONE;
+        const float Radius = MaxCharges > 5 ? 3.5f : 4.2f;
+        const float Gap = MaxCharges > 5 ? 3.0f : 4.0f;
+        const float Step = Radius * 2.0f + Gap;
+        const float TotalWidth = MaxCharges * Radius * 2.0f + (MaxCharges - 1) * Gap;
+        const float StartX = Center.X - TotalWidth * 0.5f + Radius;
+        const float Pulse = 0.5f + 0.5f * FMath::Sin(LocalAnimTime(static_cast<float>(GetTypeHash(Player.Id) % 997) * 0.013f) * 5.2f);
+
+        for (int32 I = 0; I < MaxCharges; ++I)
+        {
+            const FVector2D C(StartX + static_cast<float>(I) * Step, Center.Y);
+            const bool bReady = I < Charges;
+            const bool bCurrentRecharge = I == RechargeIndex;
+            const FLinearColor Fill = bReady
+                ? FLinearColor(0.08f + Accent.R * 0.16f, 0.56f + Accent.G * 0.22f, 0.92f + Accent.B * 0.05f, 0.94f)
+                : FLinearColor(0.015f, 0.025f, 0.042f, 0.84f);
+            const FLinearColor Rim = bReady
+                ? FLinearColor(0.72f, 0.94f, 1.0f, 0.86f + Pulse * 0.10f)
+                : FLinearColor(0.25f, 0.34f, 0.42f, 0.72f);
+
+            if (bReady)
+            {
+                DrawEllipse(OutDrawElements, Geometry, LayerId, C, FVector2D((Radius + 4.0f + Pulse * 1.5f) * 2.0f, (Radius + 4.0f + Pulse * 1.5f) * 2.0f), FLinearColor(Accent.R, Accent.G, Accent.B, 0.10f + Pulse * 0.07f));
+            }
+            DrawEllipse(OutDrawElements, Geometry, LayerId + 1, C, FVector2D(Radius * 2.0f, Radius * 2.0f), Fill);
+            DrawEllipse(OutDrawElements, Geometry, LayerId + 2, C + FVector2D(-Radius * 0.30f, -Radius * 0.38f), FVector2D(Radius * 0.86f, Radius * 0.62f), bReady ? FLinearColor(0.90f, 1.0f, 1.0f, 0.36f) : FLinearColor(0.16f, 0.22f, 0.30f, 0.30f));
+            DrawRing(OutDrawElements, Geometry, LayerId + 3, C, FVector2D((Radius + 1.0f) * 2.0f, (Radius + 1.0f) * 2.0f), Rim, 1.55f, 24);
+
+            if (bCurrentRecharge)
+            {
+                const float Progress = 1.0f - FMath::Clamp(RechargeLeftMs / RechargeTotalMs, 0.0f, 1.0f);
+                const float End = -UE_PI * 0.5f + UE_PI * 2.0f * Progress;
+                DrawRing(OutDrawElements, Geometry, LayerId + 3, C, FVector2D((Radius + 3.1f) * 2.0f, (Radius + 3.1f) * 2.0f), FLinearColor(0.03f, 0.20f, 0.28f, 0.74f), 1.15f, 24);
+                DrawArc(OutDrawElements, Geometry, LayerId + 4, C, Radius + 3.1f, -UE_PI * 0.5f, End, FLinearColor(0.48f, 1.0f, 1.0f, 0.96f), 2.0f);
+                if (Progress > 0.03f)
+                {
+                    const FVector2D Head = C + FVector2D(FMath::Cos(End), FMath::Sin(End)) * (Radius + 3.1f);
+                    DrawEllipse(OutDrawElements, Geometry, LayerId + 5, Head, FVector2D(3.0f, 3.0f), FLinearColor(0.92f, 1.0f, 1.0f, 0.90f));
+                }
+            }
+        }
+    }
+
     void DrawText(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, const FVector2D& Position, const FString& Text, float Size, const FLinearColor& Color, bool bBold = false)
     {
         FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle(bBold ? FName(TEXT("Bold")) : FName(TEXT("Regular")), static_cast<uint16>(Size));
@@ -217,6 +318,92 @@ namespace CWRunView
             Font,
             ESlateDrawEffect::None,
             Color);
+    }
+
+    FString NormalizeWeaponKey(const FString& WeaponKey)
+    {
+        const FString Key = WeaponKey.ToLower();
+        if (Key.Contains(TEXT("sniper")))
+        {
+            return TEXT("sniper");
+        }
+        if (Key.Contains(TEXT("shotgun")))
+        {
+            return TEXT("shotgun");
+        }
+        if (Key.Contains(TEXT("smg")))
+        {
+            return TEXT("smg");
+        }
+        return TEXT("pistol");
+    }
+
+    int32 FallbackMagazineSize(const FString& WeaponKey)
+    {
+        const FString Key = NormalizeWeaponKey(WeaponKey);
+        if (Key == TEXT("sniper"))
+        {
+            return 5;
+        }
+        if (Key == TEXT("shotgun"))
+        {
+            return 8;
+        }
+        if (Key == TEXT("smg"))
+        {
+            return 36;
+        }
+        return 12;
+    }
+
+    void DrawPlayerWeaponAmmoBadge(FSlateWindowElementList& OutDrawElements, const FGeometry& Geometry, int32 LayerId, int32 TextLayerId, const FCWPlayerSnapshot& Player, const FVector2D& Center, const FSlateBrush* WeaponBrush)
+    {
+        if (!Player.bAlive)
+        {
+            return;
+        }
+
+        const FString WeaponKey = NormalizeWeaponKey(Player.WeaponKey);
+        const FLinearColor Accent = LootDropAccentColor(WeaponKey);
+        const int32 MagazineSize = FMath::Max(1, Player.MagazineSize > 0 ? Player.MagazineSize : FallbackMagazineSize(WeaponKey));
+        const int32 MagazineAmmo = FMath::Clamp(Player.MagazineAmmo, 0, MagazineSize);
+        const float AmmoRatio = FMath::Clamp(static_cast<float>(MagazineAmmo) / static_cast<float>(MagazineSize), 0.0f, 1.0f);
+        const float ReloadLeftMs = FMath::Max(0.0f, Player.ReloadLeftMs);
+        const float ReloadTotalMs = FMath::Max(1.0f, Player.ReloadTotalMs);
+        const bool bReloading = ReloadLeftMs > 0.0f && Player.ReloadTotalMs > 0.0f;
+        const float ReloadProgress = bReloading ? FMath::Clamp(1.0f - ReloadLeftMs / ReloadTotalMs, 0.0f, 1.0f) : 0.0f;
+        const float BarRatio = bReloading ? FMath::Max(AmmoRatio, ReloadProgress) : AmmoRatio;
+        const FString ReserveText = Player.bReserveAmmoInfinite ? TEXT("\u221E") : FString::FromInt(FMath::Max(0, Player.ReserveAmmo));
+        const FString AmmoLabel = FString::Printf(TEXT("%d/%s"), MagazineAmmo, *ReserveText);
+
+        const float TextWidth = FMath::Max(28.0f, static_cast<float>(AmmoLabel.Len()) * 6.4f);
+        const FVector2D PanelSize(FMath::Max(74.0f, 36.0f + TextWidth), 19.0f);
+        const FVector2D PanelPos = Center - PanelSize * 0.5f;
+        const FLinearColor BorderColor = bReloading
+            ? FLinearColor(1.0f, 0.72f, 0.25f, 0.82f)
+            : FLinearColor(Accent.R, Accent.G, Accent.B, 0.56f);
+
+        DrawBox(OutDrawElements, Geometry, LayerId, PanelPos, PanelSize, BorderColor);
+        DrawBox(OutDrawElements, Geometry, LayerId + 1, PanelPos + FVector2D(1.0f, 1.0f), PanelSize - FVector2D(2.0f, 2.0f), FLinearColor(0.02f, 0.05f, 0.07f, 0.78f));
+        DrawBox(OutDrawElements, Geometry, LayerId + 2, PanelPos + FVector2D(3.0f, 3.0f), FVector2D(22.0f, 11.0f), FLinearColor(Accent.R, Accent.G, Accent.B, 0.12f));
+        DrawTexture(OutDrawElements, Geometry, LayerId + 3, WeaponBrush, PanelPos + FVector2D(3.0f, 0.8f), FVector2D(23.0f, 16.0f), FLinearColor::White);
+        DrawText(
+            OutDrawElements,
+            Geometry,
+            TextLayerId,
+            PanelPos + FVector2D(29.0f, 1.0f),
+            AmmoLabel,
+            10.0f,
+            bReloading ? FLinearColor(1.0f, 0.84f, 0.38f, 0.98f) : FLinearColor(0.88f, 0.98f, 1.0f, 0.98f),
+            true);
+
+        const FVector2D BarPos = PanelPos + FVector2D(5.0f, PanelSize.Y - 4.0f);
+        const FVector2D BarSize(PanelSize.X - 10.0f, 2.0f);
+        const FLinearColor BarColor = bReloading
+            ? FLinearColor(1.0f, 0.74f, 0.24f, 0.96f)
+            : FLinearColor(FMath::Lerp(1.0f, 0.42f, BarRatio), FMath::Lerp(0.28f, 0.96f, BarRatio), FMath::Lerp(0.22f, 0.58f, BarRatio), 0.96f);
+        DrawBox(OutDrawElements, Geometry, LayerId + 2, BarPos, BarSize, FLinearColor(0.0f, 0.0f, 0.0f, 0.72f));
+        DrawBox(OutDrawElements, Geometry, LayerId + 3, BarPos + FVector2D(1.0f, 1.0f), FVector2D(FMath::Max(0.0f, (BarSize.X - 2.0f) * BarRatio), BarSize.Y - 1.0f), BarColor);
     }
 
     bool IsBossEnemy(const FCWEnemySnapshot& Enemy);
@@ -498,6 +685,14 @@ void UCWNativeRunViewWidget::LoadRunAssets()
     LoadTexture(TEXT("smg"), TEXT("weapon-pickups/smg.png"));
     LoadTexture(TEXT("shotgun"), TEXT("weapon-pickups/shotgun.png"));
     LoadTexture(TEXT("sniper"), TEXT("weapon-pickups/sniper.png"));
+    LoadSound(TEXT("shot_pistol_06"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_06.gunshot_06"));
+    LoadSound(TEXT("shot_smg_16"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_16.gunshot_16"));
+    LoadSound(TEXT("shot_smg_18"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_18.gunshot_18"));
+    LoadSound(TEXT("shot_shotgun_08"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_08.gunshot_08"));
+    LoadSound(TEXT("shot_shotgun_11"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_11.gunshot_11"));
+    LoadSound(TEXT("shot_sniper_14"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_14.gunshot_14"));
+    LoadSound(TEXT("shot_sniper_15"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_15.gunshot_15"));
+    LoadSound(TEXT("shot_rocket_10"), TEXT("/Game/CrimsonWars/RawAssets/sfx/sfx-pack-gun_sfx/v1/gunshot/ogg/gunshot_10.gunshot_10"));
     LoadSkillIconTextures();
 }
 
@@ -556,6 +751,152 @@ void UCWNativeRunViewWidget::LoadTexture(const FString& Key, const FString& Rela
     Brush.DrawAs = ESlateBrushDrawType::Image;
     Brush.Tiling = ESlateBrushTileType::NoTile;
     BrushCache.Add(Key, Brush);
+}
+
+void UCWNativeRunViewWidget::LoadSound(const FString& Key, const FString& AssetPath)
+{
+    if (SoundCache.Contains(Key))
+    {
+        return;
+    }
+
+    const FString ObjectPath = AssetPath.StartsWith(TEXT("/Game/"))
+        ? AssetPath
+        : FString::Printf(TEXT("/Game/CrimsonWars/RawAssets/sounds/%s.%s"), *AssetPath, *AssetPath);
+    USoundBase* Sound = LoadObject<USoundBase>(this, *ObjectPath);
+    if (!Sound)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Crimson Wars native renderer: failed to load sound %s"), *ObjectPath);
+        return;
+    }
+
+    SoundCache.Add(Key, Sound);
+}
+
+float UCWNativeRunViewWidget::GetNativeGameSoundVolume() const
+{
+    const ACWNativePlayerPawn* Pawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    if (Pawn && !Pawn->GetNativeRunSettingEnabled(TEXT("game_sounds")))
+    {
+        return 0.0f;
+    }
+
+    const int32 VolumePercent = Pawn ? Pawn->GetNativeSoundVolume() : 70;
+    return FMath::Clamp(static_cast<float>(VolumePercent) / 100.0f, 0.0f, 1.0f);
+}
+
+void UCWNativeRunViewWidget::PlayShotSound(const FCWShotEventSnapshot& Event, const FCWRoomSnapshot& State)
+{
+    const float MasterVolume = GetNativeGameSoundVolume();
+    if (MasterVolume <= KINDA_SMALL_NUMBER)
+    {
+        return;
+    }
+    if (Event.ShooterType.Contains(TEXT("enemy"), ESearchCase::IgnoreCase))
+    {
+        return;
+    }
+
+    const FString WeaponKey = Event.WeaponKey.ToLower();
+    const FString KindKey = FString::Printf(TEXT("%s %s"), *Event.Kind.ToLower(), *Event.FxKey.ToLower());
+    const bool bRocket = KindKey.Contains(TEXT("rocket")) || WeaponKey.Contains(TEXT("rocket"));
+    const bool bShotgun = WeaponKey.Contains(TEXT("shotgun"));
+    const bool bSniper = WeaponKey.Contains(TEXT("sniper"));
+    const bool bSmg = WeaponKey.Contains(TEXT("smg"));
+    const bool bCompanionShot = Event.ShooterType.Contains(TEXT("companion"), ESearchCase::IgnoreCase);
+
+    TArray<FString> SoundKeys;
+    float WeaponGain = 0.88f;
+    float RateMin = 0.94f;
+    float RateMax = 1.03f;
+    if (bRocket)
+    {
+        SoundKeys.Add(TEXT("shot_rocket_10"));
+        WeaponGain = 1.08f;
+    }
+    else if (bShotgun)
+    {
+        SoundKeys.Add(TEXT("shot_shotgun_08"));
+        SoundKeys.Add(TEXT("shot_shotgun_11"));
+        WeaponGain = 1.0f;
+    }
+    else if (bSniper)
+    {
+        SoundKeys.Add(TEXT("shot_sniper_14"));
+        SoundKeys.Add(TEXT("shot_sniper_15"));
+        WeaponGain = 0.94f;
+        RateMax = 0.99f;
+    }
+    else if (bSmg)
+    {
+        SoundKeys.Add(TEXT("shot_smg_16"));
+        SoundKeys.Add(TEXT("shot_smg_18"));
+        WeaponGain = 0.82f;
+        RateMin = 0.98f;
+    }
+    else
+    {
+        SoundKeys.Add(TEXT("shot_pistol_06"));
+    }
+
+    const FCWPlayerSnapshot* LocalPlayer = nullptr;
+    const FCWPlayerSnapshot* FirstLivePlayer = nullptr;
+    const FCWPlayerSnapshot* Shooter = nullptr;
+    for (const FCWPlayerSnapshot& Player : State.Players)
+    {
+        if (!Player.bAlive)
+        {
+            continue;
+        }
+        if (!Player.bIsCompanion && !FirstLivePlayer)
+        {
+            FirstLivePlayer = &Player;
+        }
+        if (!CachedMyId.IsEmpty() && Player.Id == CachedMyId)
+        {
+            LocalPlayer = &Player;
+        }
+        if ((!Event.OwnerId.IsEmpty() && Player.Id == Event.OwnerId) ||
+            (!Event.OwnerPlayerId.IsEmpty() && Player.Id == Event.OwnerPlayerId && !Shooter))
+        {
+            Shooter = &Player;
+        }
+    }
+    if (!LocalPlayer)
+    {
+        LocalPlayer = FirstLivePlayer;
+    }
+
+    const bool bLocalShot = LocalPlayer && !bCompanionShot && Event.OwnerId == LocalPlayer->Id;
+    const bool bMyCompanionShot = LocalPlayer && bCompanionShot && Event.OwnerPlayerId == LocalPlayer->Id;
+    const float SourceVolume = bLocalShot ? 1.08f : (bMyCompanionShot ? 0.44f : 0.26f);
+    const float DistanceRadius = bMyCompanionShot ? 1800.0f : 1100.0f;
+    float DistanceGain = 0.78f;
+    if (LocalPlayer)
+    {
+        const float SourceX = Shooter ? Shooter->X : Event.X;
+        const float SourceY = Shooter ? Shooter->Y : Event.Y;
+        const float Dist = FVector2D::Distance(FVector2D(SourceX, SourceY), FVector2D(LocalPlayer->X, LocalPlayer->Y));
+        DistanceGain = FMath::Clamp(1.0f - Dist / FMath::Max(160.0f, DistanceRadius), 0.08f, 1.0f);
+    }
+
+    const float Volume = MasterVolume * SourceVolume * WeaponGain * DistanceGain;
+    if (Volume <= 0.01f || SoundKeys.Num() <= 0)
+    {
+        return;
+    }
+
+    const uint32 Hash = GetTypeHash(Event.Id.IsEmpty() ? Event.BulletId : Event.Id);
+    const FString& SoundKey = SoundKeys[static_cast<int32>(Hash % static_cast<uint32>(SoundKeys.Num()))];
+    USoundBase* const* SoundPtr = SoundCache.Find(SoundKey);
+    if (!SoundPtr || !*SoundPtr)
+    {
+        return;
+    }
+
+    const float PitchT = static_cast<float>((Hash / 17u) % 997u) / 996.0f;
+    const float Pitch = FMath::Lerp(RateMin, RateMax, PitchT);
+    UGameplayStatics::PlaySound2D(this, *SoundPtr, Volume, Pitch);
 }
 
 const FSlateBrush* UCWNativeRunViewWidget::GetBrush(const FString& Key) const
@@ -1580,6 +1921,56 @@ void UCWNativeRunViewWidget::EmitWorldFxEvent(const FCWWorldFxEvent& Event)
         return;
     }
 
+    if (Key.Contains(TEXT("heal"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("stim"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("med"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("repair"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("world_item_heal"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.28f, 1.0f, 0.50f, 0.94f), 0.96f, Radius * 0.52f);
+        AddFx(TEXT("skill_psi_core"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.86f, 1.0f, 0.76f, 0.88f), 0.62f, Radius * 0.22f);
+        return;
+    }
+
+    if (Key.Contains(TEXT("grenade"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("bomb"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("explosive"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("explosion_item"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(1.0f, 0.42f, 0.10f, 0.96f), 1.05f, Radius * 0.48f);
+        AddFx(TEXT("blast_scorch_item"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.20f, 0.16f, 0.12f, 0.58f), 7.8f, Radius * 0.36f);
+        AddFx(TEXT("world_pulse"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(1.0f, 0.80f, 0.24f, 0.70f), 0.52f, Radius * 0.40f);
+        return;
+    }
+
+    if (Key.Contains(TEXT("orbital"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("artillery"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("strike"), ESearchCase::IgnoreCase))
+    {
+        const FVector2D BeamStart = Origin - FVector2D(0.0f, FMath::Max(520.0f, Radius * 0.72f));
+        AddFx(TEXT("skill_laser_beam"), BeamStart, FVector2D(0.0f, 1.0f), FLinearColor(0.62f, 0.96f, 1.0f, 0.95f), 0.58f, Radius * 0.50f, Origin);
+        AddFx(TEXT("explosion_energy"), Origin, FVector2D(0.0f, 1.0f), FLinearColor(0.28f, 0.90f, 1.0f, 0.96f), 0.94f, Radius * 0.44f);
+        AddFx(TEXT("blast_scorch_energy"), Origin, FVector2D(0.0f, 1.0f), FLinearColor(0.04f, 0.15f, 0.18f, 0.54f), 6.2f, Radius * 0.34f);
+        return;
+    }
+
+    if (Key.Contains(TEXT("ammo"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("reload"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("haste"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_burst"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(1.0f, 0.86f, 0.24f, 0.92f), 0.72f, Radius * 0.36f);
+        AddFx(TEXT("skill_chain_origin"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(1.0f, 0.96f, 0.62f, 0.80f), 0.46f, Radius * 0.24f);
+        return;
+    }
+
+    if (Key.Contains(TEXT("shield"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("barrier"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("guard"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("skill_psi"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.34f, 1.0f, 0.86f, 0.92f), 1.05f, Radius * 0.58f);
+        AddFx(TEXT("skill_psi_core"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.92f, 1.0f, 0.96f, 0.88f), 0.84f, Radius * 0.24f);
+        return;
+    }
+
+    if (Key.Contains(TEXT("drone"), ESearchCase::IgnoreCase) || Key.Contains(TEXT("turret"), ESearchCase::IgnoreCase))
+    {
+        AddFx(TEXT("world_item_drone"), Origin, FVector2D(1.0f, 0.0f), FLinearColor(0.20f, 0.94f, 1.0f, 0.94f), 0.86f, Radius * 0.42f);
+        for (int32 I = 0; I < 5; ++I)
+        {
+            const float Angle = static_cast<float>(I) * UE_TWO_PI / 5.0f;
+            const FVector2D Ray(FMath::Cos(Angle), FMath::Sin(Angle));
+            AddFx(TEXT("skill_chain_beam"), Origin, Ray, I % 2 == 0 ? Primary : Secondary, 0.42f, Radius * 0.24f, Origin + Ray * Radius * 0.42f);
+        }
+        return;
+    }
+
     AddFx(TEXT("world_pulse"), Origin, FVector2D(1.0f, 0.0f), Primary, 0.86f, Radius * 0.62f);
 }
 
@@ -2042,6 +2433,7 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
             continue;
         }
         SeenShotEventIds.Add(EventId);
+        PlayShotSound(Event, NextState);
         FVector2D Dir(Event.Vx, Event.Vy);
         if (Dir.IsNearlyZero())
         {
@@ -2050,9 +2442,35 @@ void UCWNativeRunViewWidget::EmitStateTransitionFx(const FCWRoomSnapshot& Previo
         Dir = Dir.GetSafeNormal();
         const FLinearColor ShotColor = CWRunView::HexColor(Event.Color, FLinearColor(1.0f, 0.78f, 0.16f, 0.96f));
         const bool bShotgun = Event.WeaponKey.Equals(TEXT("shotgun"), ESearchCase::IgnoreCase);
+        const bool bRocket = Event.Kind.Equals(TEXT("rocket"), ESearchCase::IgnoreCase) || Event.ExplosionRadius > 1.0f;
+        const bool bSmg = Event.WeaponKey.Contains(TEXT("smg"), ESearchCase::IgnoreCase);
+        const bool bSniper = Event.WeaponKey.Contains(TEXT("sniper"), ESearchCase::IgnoreCase);
         const FVector2D ShotStart(Event.X, Event.Y);
-        AddFx(TEXT("muzzle"), ShotStart, Dir, ShotColor, 0.18f, bShotgun ? 42.0f : 30.0f);
-        AddFx(TEXT("muzzle_ground"), ShotStart + Dir * 18.0f, Dir, ShotColor, 0.16f, bShotgun ? 40.0f : 30.0f);
+        AddFx(TEXT("muzzle"), ShotStart, Dir, ShotColor, 0.22f, bShotgun ? 52.0f : 38.0f);
+        AddFx(TEXT("muzzle_ground"), ShotStart + Dir * 18.0f, Dir, ShotColor, 0.20f, bShotgun ? 48.0f : 36.0f);
+        if (bRocket)
+        {
+            AddFx(TEXT("rocket_launch_flash"), ShotStart + Dir * 24.0f, Dir, FLinearColor(1.0f, 0.58f, 0.10f, 0.98f), 0.42f, 158.0f, ShotStart + Dir * 260.0f);
+            AddFx(TEXT("rocket_trail"), ShotStart - Dir * 108.0f, Dir, FLinearColor(1.0f, 0.42f, 0.08f, 0.88f), 0.56f, 152.0f, ShotStart + Dir * 42.0f);
+        }
+        else
+        {
+            const float TraceLen = bSniper ? 1180.0f : (bShotgun ? 540.0f : (bSmg ? 450.0f : 640.0f));
+            const FLinearColor TraceColor = bSniper
+                ? FLinearColor(0.78f, 0.94f, 1.0f, 1.0f)
+                : (bSmg ? FLinearColor(0.14f, 0.96f, 1.0f, 0.96f) : FLinearColor(ShotColor.R, ShotColor.G, ShotColor.B, 0.98f));
+            AddFx(TEXT("shot_tracer"), ShotStart + Dir * 22.0f, Dir, TraceColor, bSniper ? 0.20f : 0.15f, bSniper ? 132.0f : (bShotgun ? 100.0f : 96.0f), ShotStart + Dir * TraceLen);
+            if (bShotgun)
+            {
+                const float BaseAngle = FMath::Atan2(Dir.Y, Dir.X);
+                for (int32 I = 0; I < 5; ++I)
+                {
+                    const float Offset = (static_cast<float>(I) - 2.0f) * 0.075f;
+                    const FVector2D PelletDir(FMath::Cos(BaseAngle + Offset), FMath::Sin(BaseAngle + Offset));
+                    AddFx(TEXT("shot_pellet_tracer"), ShotStart + PelletDir * 20.0f, PelletDir, FLinearColor(1.0f, 0.58f, 0.16f, 0.88f), 0.17f, 70.0f, ShotStart + PelletDir * (360.0f + I * 22.0f));
+                }
+            }
+        }
     }
     if (SeenShotEventIds.Num() > 256)
     {
@@ -2398,7 +2816,8 @@ bool UCWNativeRunViewWidget::ScreenToWorld(const FVector2D& ScreenPosition, cons
         FocusPlayer = &FocusView;
     }
 
-    const float Scale = FMath::Clamp(ViewportSize.X / CWRunView::ViewWorldWidth, 0.38f, 1.05f);
+    const ACWNativePlayerPawn* NativePawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    const float Scale = CWRunView::ViewScale(ViewportSize.X, NativePawn ? NativePawn->GetNativeCameraZoom() : 1.0f);
     const float WorldWidth = FMath::Max(CWRunView::DefaultWorldWidth, CachedState.World.Width);
     const float WorldHeight = FMath::Max(CWRunView::DefaultWorldHeight, CachedState.World.Height);
     const float CameraX = FocusPlayer ? FocusPlayer->X : WorldWidth * 0.5f;
@@ -2449,7 +2868,8 @@ bool UCWNativeRunViewWidget::ScreenToLocalPlayerAimWorld(const FVector2D& Screen
         FocusPlayer = LocalPlayer;
     }
 
-    const float Scale = FMath::Clamp(ViewportSize.X / CWRunView::ViewWorldWidth, 0.38f, 1.05f);
+    const ACWNativePlayerPawn* NativePawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    const float Scale = CWRunView::ViewScale(ViewportSize.X, NativePawn ? NativePawn->GetNativeCameraZoom() : 1.0f);
     const FVector2D FocusRender = GetRenderPosition(*FocusPlayer);
     const FVector2D LocalRender = GetRenderPosition(*LocalPlayer);
     const FVector2D LocalPlayerScreen(
@@ -2501,7 +2921,8 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
         FocusView.Y = FocusRender.Y;
         FocusPlayer = &FocusView;
     }
-    const float Scale = FMath::Clamp(Size.X / ViewWorldWidth, 0.38f, 1.05f);
+    const ACWNativePlayerPawn* NativePawn = Cast<ACWNativePlayerPawn>(GetOwningPlayerPawn());
+    const float Scale = ViewScale(Size.X, NativePawn ? NativePawn->GetNativeCameraZoom() : 1.0f);
     const float WorldWidth = FMath::Max(DefaultWorldWidth, CachedState.World.Width);
     const float WorldHeight = FMath::Max(DefaultWorldHeight, CachedState.World.Height);
     const float CameraX = FocusPlayer ? FocusPlayer->X : WorldWidth * 0.5f;
@@ -3275,7 +3696,8 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 FVector2D(Frame * FrameW, 0.0f),
                 FVector2D(FrameW, FrameH),
                 FVector2D(EnemyTexture->GetSizeX(), EnemyTexture->GetSizeY()),
-                FLinearColor(FMath::Lerp(1.0f, Tint.R, bBoss ? 0.16f : 0.34f), FMath::Lerp(1.0f, Tint.G, bBoss ? 0.16f : 0.34f), FMath::Lerp(1.0f, Tint.B, bBoss ? 0.16f : 0.34f), 0.96f));
+                FLinearColor(FMath::Lerp(1.0f, Tint.R, bBoss ? 0.16f : 0.34f), FMath::Lerp(1.0f, Tint.G, bBoss ? 0.16f : 0.34f), FMath::Lerp(1.0f, Tint.B, bBoss ? 0.16f : 0.34f), 0.96f),
+                Enemy.bFaceLeft);
         }
         else
         {
@@ -3371,39 +3793,39 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             continue;
         }
 
-        const float Radius = FMath::Clamp(Bullet.Radius * Scale, 4.0f, 14.0f);
+        const float Radius = FMath::Clamp(Bullet.Radius * Scale, 4.8f, 16.0f);
         const float BulletSpeed = FVector2D(Bullet.Vx, Bullet.Vy).Size();
         const FVector2D Perp(-BulletDir.Y, BulletDir.X);
         const float Time = CWRunView::LocalAnimTime(static_cast<float>(GetTypeHash(Bullet.Id)) * 0.00073f);
         const float Flicker = 0.86f + 0.14f * FMath::Sin(Time * 44.0f + Bullet.X * 0.014f + Bullet.Y * 0.017f);
         const float TraceLen = bRocket
-            ? 86.0f
+            ? 104.0f
             : (bSniper
-                ? FMath::Clamp(BulletSpeed * 0.032f, 74.0f, 118.0f)
+                ? FMath::Clamp(BulletSpeed * 0.038f, 92.0f, 146.0f)
                 : (bShotgun
-                    ? FMath::Clamp(BulletSpeed * 0.020f, 36.0f, 58.0f)
-                    : FMath::Clamp(BulletSpeed * 0.026f, bSmg ? 38.0f : 44.0f, bSmg ? 74.0f : 86.0f)));
+                    ? FMath::Clamp(BulletSpeed * 0.024f, 46.0f, 72.0f)
+                    : FMath::Clamp(BulletSpeed * 0.031f, bSmg ? 48.0f : 54.0f, bSmg ? 92.0f : 106.0f)));
         const FVector2D Tail = P - BulletDir * TraceLen;
         const FVector2D Tip = P - BulletDir * Radius * (bRocket ? 0.15f : 0.35f);
-        FLinearColor BulletColor = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.24f, 0.18f, 0.95f) : HexColor(Bullet.Color, FLinearColor(1.0f, 0.82f, 0.22f, 0.95f));
+        FLinearColor BulletColor = Bullet.bFromEnemy ? FLinearColor(1.0f, 0.18f, 0.12f, 0.98f) : HexColor(Bullet.Color, FLinearColor(1.0f, 0.82f, 0.22f, 0.98f));
         if (bSmg)
         {
-            BulletColor = FLinearColor(0.20f, 0.94f, 1.0f, 0.96f);
+            BulletColor = FLinearColor(0.12f, 0.96f, 1.0f, 0.98f);
         }
         else if (bSniper)
         {
-            BulletColor = FLinearColor(0.80f, 0.94f, 1.0f, 0.98f);
+            BulletColor = FLinearColor(0.72f, 0.92f, 1.0f, 1.0f);
         }
         else if (bShotgun)
         {
-            BulletColor = FLinearColor(1.0f, 0.56f, 0.16f, 0.96f);
+            BulletColor = FLinearColor(1.0f, 0.58f, 0.12f, 0.98f);
         }
         if (bRocket)
         {
             const float RocketScale = FMath::Clamp(Scale, 0.48f, 0.84f);
             const float BodyLength = FMath::Clamp(21.0f * RocketScale + BulletSpeed * 0.00045f, 17.0f, 29.0f);
-            const float BodyWidth = FMath::Clamp(6.2f * RocketScale, 3.9f, 6.8f);
-            const float FlameLen = FMath::Clamp(BulletSpeed * 0.036f, 62.0f, 142.0f) * (0.88f + 0.12f * Flicker);
+            const float BodyWidth = FMath::Clamp(7.0f * RocketScale, 4.4f, 7.8f);
+            const float FlameLen = FMath::Clamp(BulletSpeed * 0.041f, 74.0f, 168.0f) * (0.88f + 0.12f * Flicker);
             const FVector2D Nose = P + BulletDir * BodyLength * 0.46f;
             const FVector2D Engine = P - BulletDir * BodyLength * 0.44f;
             const FVector2D FlameTail = Engine - BulletDir * FlameLen;
@@ -3418,13 +3840,13 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
                 const FVector2D SmokePos = Engine
                     - BulletDir * FMath::Lerp(10.0f, FlameLen * 0.88f, K)
                     + Perp * SmokeWave * FMath::Lerp(1.2f, 12.0f, K);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.55f, SmokeSize * 0.78f), FLinearColor(0.05f, 0.055f, 0.060f, 0.08f * (1.0f - K * 0.38f)));
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos + Perp * SmokeWave * 1.5f, FVector2D(SmokeSize * 0.82f, SmokeSize * 0.42f), FLinearColor(0.48f, 0.34f, 0.20f, 0.10f * (1.0f - K * 0.48f)));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 10, SmokePos, FVector2D(SmokeSize * 1.65f, SmokeSize * 0.82f), FLinearColor(0.05f, 0.055f, 0.060f, 0.10f * (1.0f - K * 0.38f)));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 11, SmokePos + Perp * SmokeWave * 1.5f, FVector2D(SmokeSize * 0.90f, SmokeSize * 0.46f), FLinearColor(0.56f, 0.36f, 0.18f, 0.12f * (1.0f - K * 0.48f)));
             }
 
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, Engine - BulletDir * 1.0f, FlameTail, FLinearColor(1.0f, 0.12f, 0.02f, 0.20f * Flicker), BodyWidth * 2.05f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Engine, FlameTail + Perp * FMath::Sin(Time * 17.0f) * 7.0f, FLinearColor(ExhaustHot.R, ExhaustHot.G, ExhaustHot.B, 0.82f * Flicker), BodyWidth * 0.92f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Engine + BulletDir * 0.8f, Engine - BulletDir * FlameLen * 0.48f, FLinearColor(ExhaustCore.R, ExhaustCore.G, ExhaustCore.B, 0.98f * Flicker), BodyWidth * 0.34f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 12, Engine - BulletDir * 1.0f, FlameTail, FLinearColor(1.0f, 0.12f, 0.02f, 0.26f * Flicker), BodyWidth * 2.45f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Engine, FlameTail + Perp * FMath::Sin(Time * 17.0f) * 7.0f, FLinearColor(ExhaustHot.R, ExhaustHot.G, ExhaustHot.B, 0.92f * Flicker), BodyWidth * 1.08f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, Engine + BulletDir * 0.8f, Engine - BulletDir * FlameLen * 0.52f, FLinearColor(ExhaustCore.R, ExhaustCore.G, ExhaustCore.B, 1.0f * Flicker), BodyWidth * 0.42f);
             DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 15, Engine - BulletDir * FlameLen * 0.56f, FVector2D(BodyWidth * 1.35f, BodyWidth * 0.74f), FLinearColor(1.0f, 0.42f, 0.06f, 0.34f * Flicker));
 
             DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, Engine - BulletDir * 1.5f, Nose, FLinearColor(0.02f, 0.025f, 0.030f, 0.44f), BodyWidth + 3.4f);
@@ -3452,32 +3874,37 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
         }
         else
         {
-            const float CoreWidth = bSniper ? 2.2f : (bSmg ? 3.2f : (bShotgun ? 4.8f : 3.8f));
-            const float GlowWidth = bSniper ? 7.0f : (bShotgun ? 11.0f : 8.4f);
-            const FVector2D SoftTail = P - BulletDir * TraceLen * (bSniper ? 0.70f : 0.58f);
-            const FVector2D CoreTail = P - BulletDir * FMath::Min(TraceLen * (bSniper ? 0.42f : 0.34f), bSniper ? 34.0f : 26.0f);
-            const FVector2D GlintTail = P - BulletDir * FMath::Min(TraceLen * 0.20f, 16.0f);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, SoftTail, Tip, FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.22f * Flicker), GlowWidth);
+            const float CoreWidth = bSniper ? 2.8f : (bSmg ? 3.8f : (bShotgun ? 5.6f : 4.6f));
+            const float GlowWidth = bSniper ? 11.0f : (bShotgun ? 15.0f : 12.2f);
+            const FVector2D SoftTail = P - BulletDir * TraceLen * (bSniper ? 0.78f : 0.66f);
+            const FVector2D CoreTail = P - BulletDir * FMath::Min(TraceLen * (bSniper ? 0.50f : 0.42f), bSniper ? 52.0f : 38.0f);
+            const FVector2D GlintTail = P - BulletDir * FMath::Min(TraceLen * 0.28f, bSniper ? 28.0f : 21.0f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 13, Tail, Tip - BulletDir * 1.0f, FLinearColor(0.0f, 0.0f, 0.0f, 0.20f * Flicker), GlowWidth + 3.2f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, SoftTail, Tip, FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.34f * Flicker), GlowWidth);
             DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, CoreTail, Tip + BulletDir * 2.0f, FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, BulletColor.A * Flicker), CoreWidth);
-            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, GlintTail, Tip + BulletDir * 3.0f, FLinearColor(1.0f, 0.96f, bSniper ? 1.0f : 0.72f, 0.70f * Flicker), bSniper ? 1.1f : 1.4f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, GlintTail, Tip + BulletDir * 4.0f, FLinearColor(1.0f, 0.98f, bSniper ? 1.0f : 0.74f, 0.88f * Flicker), bSniper ? 1.5f : 1.8f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, SoftTail + Perp * 1.8f, Tip + Perp * 1.8f, FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.16f * Flicker), bSniper ? 1.0f : 1.4f);
+            DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 16, SoftTail - Perp * 1.8f, Tip - Perp * 1.8f, FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.13f * Flicker), bSniper ? 0.9f : 1.2f);
 
             if (bShotgun)
             {
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, SoftTail + Perp * 4.0f, Tip + Perp * 6.0f, FLinearColor(1.0f, 0.72f, 0.24f, 0.42f * Flicker), 1.8f);
-                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, SoftTail - Perp * 4.0f, Tip - Perp * 6.0f, FLinearColor(1.0f, 0.72f, 0.24f, 0.38f * Flicker), 1.6f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, SoftTail + Perp * 5.0f, Tip + Perp * 7.0f, FLinearColor(1.0f, 0.76f, 0.24f, 0.54f * Flicker), 2.2f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 15, SoftTail - Perp * 5.0f, Tip - Perp * 7.0f, FLinearColor(1.0f, 0.76f, 0.24f, 0.48f * Flicker), 2.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, SoftTail + Perp * 9.0f, Tip + Perp * 11.0f, FLinearColor(1.0f, 0.40f, 0.10f, 0.24f * Flicker), 1.4f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 14, SoftTail - Perp * 9.0f, Tip - Perp * 11.0f, FLinearColor(1.0f, 0.40f, 0.10f, 0.22f * Flicker), 1.3f);
             }
 
-            for (int32 I = 0; I < 3; ++I)
+            for (int32 I = 0; I < 4; ++I)
             {
-                const float K = (static_cast<float>(I) + 1.0f) / 4.0f;
-                const float DotSize = FMath::Max(3.0f, Radius * (0.82f - K * 0.18f));
+                const float K = (static_cast<float>(I) + 1.0f) / 5.0f;
+                const float DotSize = FMath::Max(3.4f, Radius * (0.92f - K * 0.20f));
                 const FVector2D DotPos = P - BulletDir * TraceLen * K + Perp * FMath::Sin(Time * 28.0f + K * 9.0f) * (bSniper ? 1.2f : 2.4f);
-                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 16, DotPos, FVector2D(DotSize * 1.6f, DotSize), FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.18f * (1.0f - K)));
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 16, DotPos, FVector2D(DotSize * 1.8f, DotSize), FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.25f * (1.0f - K)));
             }
 
-            const float TipSize = FMath::Max(7.0f, Radius * (bSniper ? 1.35f : 1.9f));
-            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 17, Tip, FVector2D(TipSize * 1.25f, TipSize), FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.34f * Flicker));
-            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 18, Tip + BulletDir * 1.5f, FVector2D(TipSize * 0.45f, TipSize * 0.45f), FLinearColor(1.0f, 0.98f, 0.78f, 0.72f * Flicker));
+            const float TipSize = FMath::Max(8.5f, Radius * (bSniper ? 1.60f : 2.15f));
+            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 17, Tip, FVector2D(TipSize * 1.45f, TipSize * 1.08f), FLinearColor(BulletColor.R, BulletColor.G, BulletColor.B, 0.44f * Flicker));
+            DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 18, Tip + BulletDir * 1.5f, FVector2D(TipSize * 0.54f, TipSize * 0.54f), FLinearColor(1.0f, 0.99f, bSniper ? 1.0f : 0.76f, 0.86f * Flicker));
         }
     }
 
@@ -3503,7 +3930,58 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             return E;
         };
 
-        if (Fx.Type == TEXT("rocket_trail"))
+        if (Fx.Type == TEXT("shot_tracer") || Fx.Type == TEXT("shot_pellet_tracer") || Fx.Type == TEXT("rocket_launch_flash"))
+        {
+            FVector2D Dir = (E - P).IsNearlyZero() ? Fx.Direction : (E - P).GetSafeNormal();
+            if (Dir.IsNearlyZero())
+            {
+                Dir = FVector2D(1.0f, 0.0f);
+            }
+            const FVector2D Perp(-Dir.Y, Dir.X);
+            const bool bRocketLaunch = Fx.Type == TEXT("rocket_launch_flash");
+            const bool bPellet = Fx.Type == TEXT("shot_pellet_tracer");
+            const float BeamLen = FVector2D::Distance(P, E);
+            const float Pulse = FMath::Sin(T * UE_PI);
+            const float GlowW = bRocketLaunch ? 34.0f : (bPellet ? 10.0f : 18.0f);
+            const float CoreW = bRocketLaunch ? 9.4f : (bPellet ? 2.4f : 4.0f);
+
+            if (bRocketLaunch)
+            {
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, P - Dir * 16.0f, E, FLinearColor(0.0f, 0.0f, 0.0f, 0.20f * A), GlowW * (0.92f + Pulse * 0.40f));
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, P - Dir * 10.0f, E, FLinearColor(1.0f, 0.16f, 0.02f, 0.32f * A), GlowW * (0.78f + Pulse * 0.40f));
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, P, E - Dir * 14.0f, FLinearColor(C.R, C.G, C.B, 0.86f * A), CoreW);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 20, P + Dir * 8.0f, E - Dir * 42.0f, FLinearColor(1.0f, 0.96f, 0.66f, 0.68f * A), CoreW * 0.38f);
+                DrawRing(OutDrawElements, AllottedGeometry, ActorLayer + 21, P, FVector2D(48.0f + Pulse * 30.0f, 48.0f + Pulse * 30.0f), FLinearColor(1.0f, 0.62f, 0.16f, 0.58f * A), 3.4f, 24, T * UE_PI * 2.0f);
+                for (int32 I = 0; I < 7; ++I)
+                {
+                    const float K = static_cast<float>(I) / 6.0f;
+                    const FVector2D SmokeP = P - Dir * (12.0f + K * 86.0f) + Perp * FMath::Sin(K * 9.0f + T * 4.0f) * (5.0f + K * 16.0f);
+                    const float SmokeSize = 9.0f + K * 20.0f;
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 16, SmokeP, FVector2D(SmokeSize * 1.55f, SmokeSize * 0.76f), FLinearColor(0.05f, 0.045f, 0.040f, 0.16f * A * (1.0f - K * 0.35f)));
+                }
+            }
+            else
+            {
+                const float HeadBias = FMath::Clamp(BeamLen * 0.040f, 15.0f, 46.0f);
+                const FVector2D HotHead = E;
+                const FVector2D HotTail = FMath::Lerp(P, E, bPellet ? 0.18f : 0.08f);
+                const FVector2D SoftTail = FMath::Lerp(P, E, bPellet ? 0.04f : 0.02f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 17, SoftTail, HotHead, FLinearColor(0.0f, 0.0f, 0.0f, 0.16f * A), GlowW + 4.0f);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 18, HotTail, HotHead, FLinearColor(C.R, C.G, C.B, (bPellet ? 0.28f : 0.36f) * A), GlowW);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, P + Perp * (bPellet ? 0.0f : 2.2f), E, FLinearColor(C.R, C.G, C.B, 0.86f * A), CoreW);
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 19, P - Perp * (bPellet ? 0.0f : 2.2f), E - Dir * 6.0f, FLinearColor(C.R, C.G, C.B, (bPellet ? 0.22f : 0.28f) * A), FMath::Max(1.0f, CoreW * 0.46f));
+                DrawLine(OutDrawElements, AllottedGeometry, ActorLayer + 20, E - Dir * HeadBias, E + Dir * 4.0f, FLinearColor(1.0f, 0.99f, 0.80f, 0.94f * A), bPellet ? 1.4f : 2.2f);
+                DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 21, E + Dir * 2.0f, FVector2D(bPellet ? 8.0f : 13.0f, bPellet ? 5.0f : 8.0f), FLinearColor(1.0f, 0.96f, 0.66f, 0.46f * A));
+                for (int32 I = 0; I < (bPellet ? 3 : 5); ++I)
+                {
+                    const float K = (static_cast<float>(I) + 1.0f) / static_cast<float>(bPellet ? 4 : 6);
+                    const FVector2D DotP = FMath::Lerp(P, E, K) + Perp * FMath::Sin(T * 14.0f + K * 8.0f) * (bPellet ? 1.6f : 3.4f);
+                    const float DotS = (bPellet ? 3.8f : 6.4f) * A * (1.0f - K * 0.34f);
+                    DrawEllipse(OutDrawElements, AllottedGeometry, ActorLayer + 19, DotP, FVector2D(DotS * 1.9f, DotS), FLinearColor(C.R, C.G, C.B, 0.34f * A));
+                }
+            }
+        }
+        else if (Fx.Type == TEXT("rocket_trail"))
         {
             FVector2D Dir = (E - P).IsNearlyZero() ? Fx.Direction : (E - P).GetSafeNormal();
             if (Dir.IsNearlyZero())
@@ -4406,6 +4884,8 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             const FString Label = Player.Name.IsEmpty() ? TEXT("Native") : Player.Name.Left(12);
             const FVector2D PlateSize(84.0f, 15.0f);
             const FVector2D PlatePos = P + FVector2D(-PlateSize.X * 0.5f, -68.0f);
+            const FString WeaponIconKey = CWRunView::NormalizeWeaponKey(Player.WeaponKey);
+            DrawPlayerWeaponAmmoBadge(OutDrawElements, AllottedGeometry, ActorLayer + 13, TextLayer, Player, PlatePos + FVector2D(PlateSize.X * 0.5f, -13.0f), GetBrush(WeaponIconKey));
             DrawBox(OutDrawElements, AllottedGeometry, ActorLayer + 10, PlatePos, PlateSize, FLinearColor(0.0f, 0.0f, 0.0f, 0.58f));
             DrawBox(OutDrawElements, AllottedGeometry, ActorLayer + 11, PlatePos, FVector2D(PlateSize.X, 1.0f), FLinearColor(Accent.R, Accent.G, Accent.B, 0.54f));
             DrawText(OutDrawElements, AllottedGeometry, TextLayer, PlatePos + FVector2D(6.0f, -1.0f), Label, 10.0f, FLinearColor(0.88f, 0.96f, 1.0f, 0.96f), true);
@@ -4415,6 +4895,7 @@ int32 UCWNativeRunViewWidget::NativePaint(const FPaintArgs& Args, const FGeometr
             const FVector2D HpBarSize(PlateSize.X - 8.0f, 6.0f);
             DrawBox(OutDrawElements, AllottedGeometry, ActorLayer + 10, HpBarPos, HpBarSize, FLinearColor(0.0f, 0.0f, 0.0f, 0.72f));
             DrawBox(OutDrawElements, AllottedGeometry, ActorLayer + 11, HpBarPos + FVector2D(1.0f, 1.0f), FVector2D(FMath::Max(0.0f, (HpBarSize.X - 2.0f) * HpPct), HpBarSize.Y - 2.0f), FLinearColor(0.42f, 1.0f, 0.20f, 0.94f));
+            DrawJumpChargeIndicators(OutDrawElements, AllottedGeometry, ActorLayer + 12, Player, HpBarPos + FVector2D(HpBarSize.X * 0.5f, HpBarSize.Y + 8.5f), Accent);
         }
 
         if (bMe)

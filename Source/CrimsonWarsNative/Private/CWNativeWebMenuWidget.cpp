@@ -32,21 +32,6 @@ void UCWNativeWebMenuWidget::NativeConstruct()
     ShowMenu();
 }
 
-void UCWNativeWebMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-    Super::NativeTick(MyGeometry, InDeltaTime);
-
-    if (bMenuShown && Browser)
-    {
-        FocusRefreshSeconds += InDeltaTime;
-        if (FocusRefreshSeconds >= 0.5f)
-        {
-            FocusRefreshSeconds = 0.0f;
-            FocusBrowser();
-        }
-    }
-}
-
 void UCWNativeWebMenuWidget::BuildWidgetTree()
 {
     if (!WidgetTree)
@@ -103,7 +88,13 @@ void UCWNativeWebMenuWidget::LoadMenuUrl()
     }
 
     const FString Url = BuildMenuUrl();
-    if (!bInitialUrlLoaded || !Browser->GetUrl().StartsWith(Url.Left(24)))
+    FString CurrentUrl = Browser->GetUrl();
+    FString CurrentUrlWithoutHash;
+    if (CurrentUrl.Split(TEXT("#"), &CurrentUrlWithoutHash, nullptr))
+    {
+        CurrentUrl = CurrentUrlWithoutHash;
+    }
+    if (!bInitialUrlLoaded || !CurrentUrl.Equals(Url, ESearchCase::IgnoreCase))
     {
         Browser->LoadURL(Url);
         bInitialUrlLoaded = true;
@@ -128,7 +119,7 @@ FString UCWNativeWebMenuWidget::BuildMenuUrl() const
         BaseUrl.LeftChopInline(1);
     }
 
-    return BaseUrl + TEXT("/play?tab=characters&native=ue&uev=20260513nativeonly1");
+    return BaseUrl + TEXT("/play?tab=characters&native=ue&uev=20260515uefocus1");
 }
 
 void UCWNativeWebMenuWidget::HandleUrlChanged(const FText& Text)
@@ -289,7 +280,6 @@ bool UCWNativeWebMenuWidget::ConsumeNativeRenderRequest(FString& OutRoomCode, FS
 void UCWNativeWebMenuWidget::SuspendForNativeRun()
 {
     bMenuShown = false;
-    FocusRefreshSeconds = 0.0f;
     SetVisibility(ESlateVisibility::Collapsed);
     ApplyInputMode(false);
 

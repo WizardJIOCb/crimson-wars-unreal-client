@@ -384,7 +384,22 @@ FCWPlayerSnapshot FCWProtocolParser::ParsePlayerObject(const TSharedPtr<FJsonObj
     Player.PickupRadius = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(Obj, TEXT("pickupRadius"))));
     Player.MagazineAmmo = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("magazineAmmo"))));
     Player.MagazineSize = FMath::Max(1, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("magazineSize"), 1.0)));
-    Player.ReserveAmmo = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("reserveAmmo"), CWJson::GetNumber(Obj, TEXT("ammo")))));
+    const TSharedPtr<FJsonValue>* ReserveAmmoValue = Obj.IsValid() ? Obj->Values.Find(TEXT("reserveAmmo")) : nullptr;
+    const TSharedPtr<FJsonValue>* AmmoValue = Obj.IsValid() ? Obj->Values.Find(TEXT("ammo")) : nullptr;
+    Player.bReserveAmmoInfinite = ReserveAmmoValue && ReserveAmmoValue->IsValid() && (*ReserveAmmoValue)->Type == EJson::Null;
+    if (!Player.bReserveAmmoInfinite && ReserveAmmoValue && ReserveAmmoValue->IsValid())
+    {
+        Player.ReserveAmmo = FMath::Max(0, static_cast<int32>(CWJson::ValueAsNumber(*ReserveAmmoValue)));
+    }
+    else if (!Player.bReserveAmmoInfinite && AmmoValue && AmmoValue->IsValid() && (*AmmoValue)->Type != EJson::Null)
+    {
+        Player.ReserveAmmo = FMath::Max(0, static_cast<int32>(CWJson::ValueAsNumber(*AmmoValue)));
+    }
+    else
+    {
+        Player.bReserveAmmoInfinite = true;
+        Player.ReserveAmmo = 0;
+    }
     Player.ReloadLeftMs = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(Obj, TEXT("reloadLeftMs"))));
     Player.ReloadTotalMs = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(Obj, TEXT("reloadTotalMs"))));
     Player.DodgeCharges = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("dodgeCharges"))));
@@ -393,8 +408,21 @@ FCWPlayerSnapshot FCWProtocolParser::ParsePlayerObject(const TSharedPtr<FJsonObj
     Player.DodgeRechargeTotalMs = static_cast<float>(FMath::Max(0.0, CWJson::GetNumber(Obj, TEXT("dodgeRechargeTotalMs"))));
     Player.DodgeInvulnUntil = CWJson::GetNumber(Obj, TEXT("dodgeInvulnUntil"));
     Player.NetPingMs = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("netPingMs"))));
+    Player.Kills = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("kills"), CWJson::GetNumber(Obj, TEXT("enemyKills")))));
+    Player.Score = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("score"))));
+    Player.EnemyKills = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("enemyKills"), Player.Kills)));
+    Player.BossKills = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("bossKills"))));
+    Player.PvpKills = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("pvpKills"))));
+    Player.PvpDeaths = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("pvpDeaths"))));
+    Player.Deaths = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("deaths"))));
     Player.LastProcessedInputSeq = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("lastProcessedInputSeq"))));
     Player.bAlive = CWJson::GetBool(Obj, TEXT("alive"), true);
+    Player.bCanRespawn = CWJson::GetBool(Obj, TEXT("canRespawn"));
+    Player.bIsOut = CWJson::GetBool(Obj, TEXT("isOut"));
+    Player.LivesLeft = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("livesLeft"))));
+    Player.LivesTotal = FMath::Max(1, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("livesTotal"), 1.0)));
+    Player.ReviveTokens = FMath::Max(0, static_cast<int32>(CWJson::GetNumber(Obj, TEXT("reviveTokens"))));
+    Player.RespawnAt = CWJson::GetNumber(Obj, TEXT("respawnAt"));
     Player.bShooting = CWJson::GetBool(Obj, TEXT("shooting"));
     Player.bIsCompanion = CWJson::GetBool(Obj, TEXT("isCompanion"));
     if (const TSharedPtr<FJsonObject> MeleeObj = CWJson::GetObject(Obj, TEXT("melee")))

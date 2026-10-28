@@ -1,7 +1,7 @@
 param(
     [string]$EngineRoot = "C:\UE_5.7",
     [string]$AndroidSdk = "$env:LOCALAPPDATA\Android\Sdk",
-    [string]$NdkVersion = "27.1.12297006",
+    [string]$NdkVersion = "27.3.13750724",
     [string]$JavaHome = "C:\Program Files\Android\Android Studio\jbr",
     [string]$ArchiveDir = "",
     [string]$Configuration = "Development",
@@ -46,6 +46,7 @@ try {
         -platform=Android `
         -clientconfig="$Configuration" `
         -cook `
+        -nocompileeditor `
         -map=/Game/Maps/L_NativeMenuSandbox `
         -build `
         -stage `
@@ -53,7 +54,8 @@ try {
         -package `
         -archive `
         -archivedirectory="$ArchiveDir" `
-        -utf8output
+        -utf8output `
+        -ubtargs="-NoHotReloadFromIDE -NoLiveCoding"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

@@ -240,6 +240,9 @@ struct FCWPlayerSnapshot
     int32 ReserveAmmo = 0;
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bReserveAmmoInfinite = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
     float ReloadLeftMs = 0.0f;
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
@@ -264,10 +267,49 @@ struct FCWPlayerSnapshot
     int32 NetPingMs = 0;
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Kills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Score = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 EnemyKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 BossKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 PvpKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 PvpDeaths = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Deaths = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
     int32 LastProcessedInputSeq = 0;
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
     bool bAlive = true;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bCanRespawn = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bIsOut = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 LivesLeft = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 LivesTotal = 1;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 ReviveTokens = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    double RespawnAt = 0.0;
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
     bool bShooting = false;
@@ -1061,6 +1103,84 @@ struct FCWRoomSnapshot
 
     UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
     FCWSceneThemeSnapshot SceneTheme;
+};
+
+USTRUCT(BlueprintType)
+struct FCWNativeRunResultSnapshot
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bVisible = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bVictory = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    bool bFinalDeath = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    FString Title;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    FString Message;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    FString RoomCode;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    FString GameMode;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    FString HeroName;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Score = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Kills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 EnemyKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 BossKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 TeamEnemyKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 TeamBossKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 TeamScore = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Survivors = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 SquadSize = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 PvpKills = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 PvpDeaths = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 Deaths = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 HeroLevel = 1;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 HeroXp = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    int32 HeroXpToNext = 1;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Crimson Wars")
+    float SurvivalSec = 0.0f;
 };
 
 class CRIMSONWARSNATIVE_API FCWProtocolParser

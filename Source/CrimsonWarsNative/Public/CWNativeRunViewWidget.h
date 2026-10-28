@@ -7,6 +7,7 @@
 #include "CWNativeRunViewWidget.generated.h"
 
 class UCanvasPanel;
+class USoundBase;
 class UTexture2D;
 
 UCLASS()
@@ -75,6 +76,9 @@ private:
     void LoadRunAssets();
     void LoadSkillIconTextures();
     void LoadTexture(const FString& Key, const FString& RelativePath);
+    void LoadSound(const FString& Key, const FString& AssetPath);
+    void PlayShotSound(const FCWShotEventSnapshot& Event, const FCWRoomSnapshot& State);
+    float GetNativeGameSoundVolume() const;
     const FSlateBrush* GetBrush(const FString& Key) const;
     const FCWPlayerSnapshot* FindFocusPlayer() const;
     FVector2D GetRenderPosition(const FCWPlayerSnapshot& Player) const;
@@ -94,6 +98,9 @@ private:
 
     UPROPERTY()
     TMap<FString, UTexture2D*> TextureCache;
+
+    UPROPERTY()
+    TMap<FString, USoundBase*> SoundCache;
 
     TMap<FString, FSlateBrush> BrushCache;
     FString AssetsRoot;

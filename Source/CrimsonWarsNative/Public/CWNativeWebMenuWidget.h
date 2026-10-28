@@ -15,7 +15,6 @@ class CRIMSONWARSNATIVE_API UCWNativeWebMenuWidget : public UUserWidget
 public:
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeConstruct() override;
-    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
     UFUNCTION(BlueprintCallable, Category = "Crimson Wars|UI")
     void ShowMenu();
@@ -59,7 +58,6 @@ private:
 
     bool bMenuShown = true;
     bool bInitialUrlLoaded = false;
-    float FocusRefreshSeconds = 0.0f;
     bool bNativeRenderRequested = false;
     FString LastNativeRenderRequestToken;
     FString SyncedRoomCode;

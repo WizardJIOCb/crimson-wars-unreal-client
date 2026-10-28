@@ -10,6 +10,8 @@ class UCWNativeRunViewWidget;
 class UCWNativeWebMenuWidget;
 class UStaticMeshComponent;
 class USpringArmComponent;
+struct FCWEnemySnapshot;
+struct FCWPlayerSnapshot;
 
 UCLASS()
 class CRIMSONWARSNATIVE_API ACWNativePlayerPawn : public APawn
@@ -29,6 +31,16 @@ public:
     bool IsNativePlayersPanelOpen() const { return bNativePlayersPanelOpen; }
     bool IsNativeChatOpen() const { return bNativeChatOpen; }
     FString GetNativeChatDraft() const { return NativeChatDraft; }
+    bool GetNativeRunSettingEnabled(const FString& SettingId) const;
+    FString GetNativeRunSettingValueLabel(const FString& SettingId) const;
+    int32 GetNativeSoundVolume() const { return NativeSoundVolume; }
+    void SetNativeSoundVolume(int32 VolumePercent);
+    float GetNativeCameraZoom() const { return NativeCameraZoom; }
+    void SetNativeCameraZoom(float Zoom);
+    bool AdjustNativeCameraZoom(float Steps);
+    void ToggleNativeRunSetting(const FString& SettingId);
+    void CycleNativeRunSettingValue(const FString& SettingId);
+    void EndNativeMenuDrag();
     bool IsNativeRunInputActive() const;
     bool HandleNativeHudClickAtMouse();
     bool HandleNativeHudClickAtScreenPosition(const FVector2D& ScreenPosition);
@@ -55,6 +67,7 @@ private:
     void EnsurePlayerUi();
     void EnsureNativeRunUi(APlayerController* PC);
     void ApplyNativeRunInputMode(APlayerController* PC);
+    void ApplyNativeCameraTuning();
     void ApplySyncedNativeIdentity();
     void SetNativeRenderMode(bool bEnableNativeRenderer, const FString& RoomCode = FString(), const FString& HeroId = FString(), bool bEnableNative3DView = false);
     void ApplyNativeRendererWidgetVisibility();
@@ -69,13 +82,18 @@ private:
     void LeavePressed();
     void ToggleMenuPressed();
     void ResetNativeInputState();
+    void FlushNativePressedKeys();
     void RefreshNativeMovementFromKeys();
     void BeginNativeChat();
     bool SubmitNativeChat();
     void CancelNativeChat();
     bool SendNativeRunInput(bool bConsumeJump);
     bool SyncActorToServerPlayer();
+    const FCWPlayerSnapshot* FindAuthoritativePlayer() const;
+    const FCWEnemySnapshot* FindBestNativeAutoAimTarget(const FCWPlayerSnapshot& Player) const;
     FVector ResolveAimWorld() const;
+    void BeginNativeSoundVolumeDrag(float MouseX, const FVector2D& RowPos, float ColumnW);
+    void ApplyNativeSoundVolumeDrag(float MouseX);
 
     UPROPERTY(VisibleAnywhere, Category = "Crimson Wars")
     USceneComponent* SceneRoot = nullptr;
@@ -104,7 +122,15 @@ private:
     bool bNativeStatsPanelOpen = false;
     bool bNativePlayersPanelOpen = false;
     bool bNativeChatOpen = false;
+    TMap<FString, bool> NativeRunSettings;
+    FString NativeGraphicsQuality = TEXT("Medium");
+    int32 NativeSoundVolume = 70;
+    FString NativeLanguage = TEXT("RU");
     FString NativeChatDraft;
+    float NativeCameraZoom = 1.22f;
+    bool bNativeSoundVolumeDragging = false;
+    float NativeSoundVolumeDragTrackX = 0.0f;
+    float NativeSoundVolumeDragTrackW = 1.0f;
     float MoveForwardValue = 0.0f;
     float MoveRightValue = 0.0f;
     bool bShooting = false;

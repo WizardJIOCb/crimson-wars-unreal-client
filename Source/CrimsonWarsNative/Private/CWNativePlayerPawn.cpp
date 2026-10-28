@@ -18,6 +18,44 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Widgets/SViewport.h"
 
+namespace
+{
+    constexpr float NativeRunBaseOrthoWidth = 2300.0f;
+    constexpr float NativeRunCameraPitch = -66.0f;
+    constexpr float NativeRunCameraYaw = -90.0f;
+    constexpr float NativeCameraZoomMin = 0.70f;
+    constexpr float NativeCameraZoomMax = 5.20f;
+
+    bool DefaultNativeRunSettingEnabled(const FString& SettingId)
+    {
+        return SettingId != TEXT("show_companion_names")
+            && SettingId != TEXT("dynamic_sticks");
+    }
+
+    bool IsNativeRunCheckboxSetting(const FString& SettingId)
+    {
+        return SettingId == TEXT("shadows")
+            || SettingId == TEXT("bullet_tracers")
+            || SettingId == TEXT("extra_blood")
+            || SettingId == TEXT("hit_effects")
+            || SettingId == TEXT("show_minimap")
+            || SettingId == TEXT("enemy_hp_bars")
+            || SettingId == TEXT("show_companion_names")
+            || SettingId == TEXT("show_companion_ammo")
+            || SettingId == TEXT("connection_indicator")
+            || SettingId == TEXT("show_fps")
+            || SettingId == TEXT("show_chat")
+            || SettingId == TEXT("auto_fire")
+            || SettingId == TEXT("auto_aim")
+            || SettingId == TEXT("dynamic_sticks")
+            || SettingId == TEXT("show_aim_stick")
+            || SettingId == TEXT("game_sounds")
+            || SettingId == TEXT("show_commentator")
+            || SettingId == TEXT("commentator_voice")
+            || SettingId == TEXT("show_replay_player");
+    }
+}
+
 class FCWNativeInputPreProcessor final : public IInputProcessor
 {
 public:
@@ -55,6 +93,14 @@ public:
 
         if (Pawn->IsNativeRunInputActive())
         {
+            if (Key == EKeys::Equals || Key == EKeys::Add)
+            {
+                return Pawn->AdjustNativeCameraZoom(1.0f);
+            }
+            if (Key == EKeys::Hyphen || Key == EKeys::Subtract)
+            {
+                return Pawn->AdjustNativeCameraZoom(-1.0f);
+            }
             if (Key == EKeys::One || Key == EKeys::NumPadOne)
             {
                 return Pawn->UseNativeQuickSlotHotkey(1);
@@ -80,14 +126,25 @@ public:
     virtual bool HandleKeyUpEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override
     {
         ACWNativePlayerPawn* Pawn = Owner.Get();
-        if (!Pawn || !Pawn->IsNativeRunInputActive())
+        if (!Pawn)
         {
-            return Pawn && Pawn->IsNativeChatOpen();
+            return false;
         }
 
         const FKey Key = InKeyEvent.GetKey();
+        const bool bIsNativeMoveKey = Key == EKeys::W || Key == EKeys::A || Key == EKeys::S || Key == EKeys::D || Key == EKeys::SpaceBar;
+        if (!Pawn->IsNativeRunInputActive())
+        {
+            if (Pawn->IsNativeChatOpen() || Pawn->IsNativeRunMenuOpen())
+            {
+                Pawn->SetNativeKeyState(Key, false);
+                return true;
+            }
+            return false;
+        }
+
         Pawn->SetNativeKeyState(Key, false);
-        return Key == EKeys::W || Key == EKeys::A || Key == EKeys::S || Key == EKeys::D || Key == EKeys::SpaceBar;
+        return bIsNativeMoveKey;
     }
 
     virtual bool HandleMouseButtonDownEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override
@@ -138,6 +195,18 @@ public:
         return false;
     }
 
+    virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication& SlateApp, const FPointerEvent& WheelEvent, const FPointerEvent* GestureEvent) override
+    {
+        ACWNativePlayerPawn* Pawn = Owner.Get();
+        if (!Pawn || !Pawn->IsNativeRunInputActive())
+        {
+            return false;
+        }
+
+        Pawn->UpdateNativeCursorScreenPosition(WheelEvent.GetScreenSpacePosition());
+        return Pawn->AdjustNativeCameraZoom(WheelEvent.GetWheelDelta());
+    }
+
 private:
     TWeakObjectPtr<ACWNativePlayerPawn> Owner;
 };
@@ -159,8 +228,10 @@ ACWNativePlayerPawn::ACWNativePlayerPawn()
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SpringArm);
     Camera->ProjectionMode = ECameraProjectionMode::Orthographic;
-    Camera->OrthoWidth = 3600.0f;
+    Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
     Camera->bConstrainAspectRatio = false;
+    Camera->SetAutoActivate(true);
+    ApplyNativeCameraTuning();
 
     VisualMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("LocalRunnerPreview"));
     VisualMesh->SetupAttachment(SceneRoot);
@@ -172,6 +243,32 @@ ACWNativePlayerPawn::ACWNativePlayerPawn()
     if (CapsuleMesh.Succeeded())
     {
         VisualMesh->SetStaticMesh(CapsuleMesh.Object);
+    }
+
+    const FString DefaultSettings[] = {
+        TEXT("shadows"),
+        TEXT("bullet_tracers"),
+        TEXT("extra_blood"),
+        TEXT("hit_effects"),
+        TEXT("show_minimap"),
+        TEXT("enemy_hp_bars"),
+        TEXT("show_companion_names"),
+        TEXT("show_companion_ammo"),
+        TEXT("connection_indicator"),
+        TEXT("show_fps"),
+        TEXT("show_chat"),
+        TEXT("auto_fire"),
+        TEXT("auto_aim"),
+        TEXT("dynamic_sticks"),
+        TEXT("show_aim_stick"),
+        TEXT("game_sounds"),
+        TEXT("show_commentator"),
+        TEXT("commentator_voice"),
+        TEXT("show_replay_player")
+    };
+    for (const FString& SettingId : DefaultSettings)
+    {
+        NativeRunSettings.Add(SettingId, DefaultNativeRunSettingEnabled(SettingId));
     }
 }
 
@@ -201,7 +298,32 @@ void ACWNativePlayerPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ACWNativePlayerPawn::EnsurePlayerUi()
 {
-    if (WebMenuWidget && (!bUseNativeRenderer || (RunHudWidget && RunViewWidget)))
+    if (bUseNativeRenderer && bUseNative3DView && RunViewWidget)
+    {
+        RunViewWidget->RemoveFromParent();
+        RunViewWidget = nullptr;
+    }
+
+    if (bUseNativeRenderer)
+    {
+        if (WebMenuWidget)
+        {
+            WebMenuWidget->RemoveFromParent();
+            WebMenuWidget = nullptr;
+            UE_LOG(LogTemp, Display, TEXT("Crimson Wars native UI: removed web menu widget for native run."));
+        }
+
+        if (APlayerController* PC = Cast<APlayerController>(GetController()))
+        {
+            PC->bShowMouseCursor = true;
+            PC->bEnableClickEvents = true;
+            PC->bEnableMouseOverEvents = true;
+            EnsureNativeRunUi(PC);
+        }
+        return;
+    }
+
+    if (WebMenuWidget)
     {
         return;
     }
@@ -237,7 +359,15 @@ void ACWNativePlayerPawn::EnsureNativeRunUi(APlayerController* PC)
         return;
     }
 
-    if (!RunViewWidget)
+    if (bUseNative3DView)
+    {
+        if (RunViewWidget)
+        {
+            RunViewWidget->RemoveFromParent();
+            RunViewWidget = nullptr;
+        }
+    }
+    else if (!RunViewWidget)
     {
         RunViewWidget = CreateWidget<UCWNativeRunViewWidget>(PC, UCWNativeRunViewWidget::StaticClass());
         if (RunViewWidget)
@@ -265,6 +395,38 @@ void ACWNativePlayerPawn::EnsureNativeRunUi(APlayerController* PC)
     }
 }
 
+void ACWNativePlayerPawn::ApplyNativeCameraTuning()
+{
+    if (!Camera)
+    {
+        return;
+    }
+
+    Camera->PostProcessBlendWeight = 1.0f;
+
+    FPostProcessSettings& Settings = Camera->PostProcessSettings;
+    Settings.bOverride_BloomIntensity = true;
+    Settings.BloomIntensity = 0.0f;
+    Settings.bOverride_MotionBlurAmount = true;
+    Settings.MotionBlurAmount = 0.0f;
+    Settings.bOverride_AutoExposureMinBrightness = true;
+    Settings.AutoExposureMinBrightness = 1.0f;
+    Settings.bOverride_AutoExposureMaxBrightness = true;
+    Settings.AutoExposureMaxBrightness = 1.0f;
+    Settings.bOverride_AutoExposureBias = true;
+    Settings.AutoExposureBias = bUseNative3DView ? -0.35f : 0.0f;
+    Settings.bOverride_DepthOfFieldFstop = true;
+    Settings.DepthOfFieldFstop = 32.0f;
+    Settings.bOverride_DepthOfFieldDepthBlurRadius = true;
+    Settings.DepthOfFieldDepthBlurRadius = 0.0f;
+    Settings.bOverride_DepthOfFieldScale = true;
+    Settings.DepthOfFieldScale = 0.0f;
+    Settings.bOverride_DepthOfFieldNearBlurSize = true;
+    Settings.DepthOfFieldNearBlurSize = 0.0f;
+    Settings.bOverride_DepthOfFieldFarBlurSize = true;
+    Settings.DepthOfFieldFarBlurSize = 0.0f;
+}
+
 void ACWNativePlayerPawn::ApplyNativeRunInputMode(APlayerController* PC)
 {
     if (!PC)
@@ -275,6 +437,7 @@ void ACWNativePlayerPawn::ApplyNativeRunInputMode(APlayerController* PC)
     PC->bShowMouseCursor = true;
     PC->bEnableClickEvents = true;
     PC->bEnableMouseOverEvents = true;
+    PC->SetViewTarget(this);
     if (FSlateApplication::IsInitialized())
     {
         UpdateNativeCursorScreenPosition(FSlateApplication::Get().GetCursorPos());
@@ -298,7 +461,11 @@ void ACWNativePlayerPawn::ApplyNativeRunInputMode(APlayerController* PC)
 
 bool ACWNativePlayerPawn::IsNativeRunInputActive() const
 {
-    return bUseNativeRenderer && !bNativeRunMenuOpen && !bNativeChatOpen && (!WebMenuWidget || !WebMenuWidget->IsMenuShown());
+    return bUseNativeRenderer
+        && !bNativeRunMenuOpen
+        && !bNativeChatOpen
+        && (!RunHudWidget || !RunHudWidget->IsRunResultVisible())
+        && (!WebMenuWidget || !WebMenuWidget->IsMenuShown());
 }
 
 void ACWNativePlayerPawn::BeginNativeChat()
@@ -309,6 +476,8 @@ void ACWNativePlayerPawn::BeginNativeChat()
     }
 
     ResetNativeInputState();
+    FlushNativePressedKeys();
+    SendNativeRunInput(false);
     bNativeStatsPanelOpen = false;
     bNativePlayersPanelOpen = false;
     bNativeChatOpen = true;
@@ -334,6 +503,8 @@ bool ACWNativePlayerPawn::SubmitNativeChat()
     NativeChatDraft.Reset();
     bNativeChatOpen = false;
     ResetNativeInputState();
+    FlushNativePressedKeys();
+    SendNativeRunInput(false);
     return true;
 }
 
@@ -342,6 +513,8 @@ void ACWNativePlayerPawn::CancelNativeChat()
     NativeChatDraft.Reset();
     bNativeChatOpen = false;
     ResetNativeInputState();
+    FlushNativePressedKeys();
+    SendNativeRunInput(false);
 }
 
 bool ACWNativePlayerPawn::HandleNativeChatKeyDown(const FKey& Key)
@@ -550,6 +723,39 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
         return MousePosition.X >= Pos.X && MousePosition.X <= Pos.X + Size.X && MousePosition.Y >= Pos.Y && MousePosition.Y <= Pos.Y + Size.Y;
     };
 
+    if (RunHudWidget && RunHudWidget->IsRunResultVisible())
+    {
+        const FVector2D PanelSize(FMath::Clamp(ViewportSize.X * 0.44f, 520.0f, 720.0f), FMath::Clamp(ViewportSize.Y * 0.54f, 390.0f, 540.0f));
+        const FVector2D PanelPos((ViewportSize.X - PanelSize.X) * 0.5f, (ViewportSize.Y - PanelSize.Y) * 0.5f);
+        const FVector2D WatchPos = PanelPos + FVector2D(28.0f, PanelSize.Y - 74.0f);
+        const FVector2D RunsPos = PanelPos + FVector2D(PanelSize.X - 186.0f, PanelSize.Y - 74.0f);
+
+        NativeChatDraft.Reset();
+        bNativeChatOpen = false;
+        bNativePlayersPanelOpen = false;
+        bNativeStatsPanelOpen = false;
+
+        if (InRect(WatchPos, FVector2D(156.0f, 42.0f)))
+        {
+            RunHudWidget->DismissRunResult();
+            ResetNativeInputState();
+            return true;
+        }
+
+        if (InRect(RunsPos, FVector2D(158.0f, 42.0f)))
+        {
+            RunHudWidget->DismissRunResult();
+            bNativeRunMenuOpen = false;
+            ResetNativeInputState();
+            LeavePressed();
+            SetNativeRenderMode(false, FString(), FString(), false);
+            return true;
+        }
+
+        ResetNativeInputState();
+        return true;
+    }
+
     const FVector2D MapPos(14.0f, 14.0f);
     const float MiniMapSize = FMath::Clamp(ViewportSize.Y * 0.23f, 138.0f, 188.0f);
     const FVector2D MenuPos(MapPos.X + MiniMapSize + 10.0f, 18.0f);
@@ -566,6 +772,8 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
         const FVector2D ClosePos = PanelPos + FVector2D(PanelSize.X - 48.0f, 18.0f);
         const FVector2D ResumePos = PanelPos + FVector2D(28.0f, PanelSize.Y - 78.0f);
         const FVector2D LeavePos = PanelPos + FVector2D(PanelSize.X - 166.0f, PanelSize.Y - 78.0f);
+        const FVector2D SettingsPos = PanelPos + FVector2D(28.0f, 226.0f);
+        const FVector2D SettingsSize(PanelSize.X - 56.0f, PanelSize.Y - 318.0f);
 
         if (InRect(ClosePos, FVector2D(30.0f, 30.0f)) || InRect(ResumePos, FVector2D(136.0f, 42.0f)))
         {
@@ -580,6 +788,64 @@ bool ACWNativePlayerPawn::HandleNativeHudClickAtViewportPosition(const FVector2D
             LeavePressed();
             SetNativeRenderMode(false, FString(), FString(), false);
             return true;
+        }
+
+        struct FNativeMenuSettingHit
+        {
+            const TCHAR* Id;
+            bool bCheckbox;
+        };
+        const FNativeMenuSettingHit Settings[] = {
+            { TEXT("graphics_quality"), false },
+            { TEXT("shadows"), true },
+            { TEXT("bullet_tracers"), true },
+            { TEXT("extra_blood"), true },
+            { TEXT("hit_effects"), true },
+            { TEXT("show_minimap"), true },
+            { TEXT("enemy_hp_bars"), true },
+            { TEXT("show_companion_names"), true },
+            { TEXT("show_companion_ammo"), true },
+            { TEXT("connection_indicator"), true },
+            { TEXT("show_fps"), true },
+            { TEXT("show_chat"), true },
+            { TEXT("auto_fire"), true },
+            { TEXT("auto_aim"), true },
+            { TEXT("dynamic_sticks"), true },
+            { TEXT("show_aim_stick"), true },
+            { TEXT("game_sounds"), true },
+            { TEXT("sound_volume"), false },
+            { TEXT("show_commentator"), true },
+            { TEXT("commentator_voice"), true },
+            { TEXT("show_replay_player"), true },
+            { TEXT("language"), false }
+        };
+        constexpr int32 RowsPerColumn = 11;
+        const float ColumnW = SettingsSize.X * 0.5f;
+        const float RowH = 17.0f;
+        const FVector2D FirstRowPos = SettingsPos + FVector2D(18.0f, 54.0f);
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(Settings); ++Index)
+        {
+            const int32 Column = Index / RowsPerColumn;
+            const int32 Row = Index % RowsPerColumn;
+            const FVector2D RowPos = FirstRowPos + FVector2D(static_cast<float>(Column) * ColumnW, static_cast<float>(Row) * RowH);
+            if (InRect(RowPos - FVector2D(4.0f, 2.0f), FVector2D(ColumnW - 16.0f, RowH)))
+            {
+                if (FString(Settings[Index].Id) == TEXT("sound_volume"))
+                {
+                    BeginNativeSoundVolumeDrag(MousePosition.X, RowPos, ColumnW);
+                    return true;
+                }
+                else if (Settings[Index].bCheckbox)
+                {
+                    ToggleNativeRunSetting(Settings[Index].Id);
+                }
+                else
+                {
+                    CycleNativeRunSettingValue(Settings[Index].Id);
+                }
+                ResetNativeInputState();
+                return true;
+            }
         }
 
         return true;
@@ -744,7 +1010,29 @@ void ACWNativePlayerPawn::Tick(float DeltaSeconds)
         if (WebMenuWidget->ConsumeNativeRenderRequest(SyncedRoomCode, SyncedHeroId))
         {
             ApplySyncedNativeIdentity();
-            SetNativeRenderMode(true, SyncedRoomCode, SyncedHeroId);
+            SetNativeRenderMode(true, SyncedRoomCode, SyncedHeroId, true);
+        }
+    }
+    if (bUseNativeRenderer && !bUseNative3DView)
+    {
+        SetNativeRenderMode(true, FString(), FString(), true);
+    }
+    if (bUseNative3DView)
+    {
+        if (SpringArm && Camera)
+        {
+            Camera->ProjectionMode = ECameraProjectionMode::Orthographic;
+            Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
+            SpringArm->SetRelativeRotation(FRotator(NativeRunCameraPitch, NativeRunCameraYaw, 0.0f));
+            SpringArm->TargetArmLength = 2200.0f;
+            ApplyNativeCameraTuning();
+        }
+        if (APlayerController* PC = Cast<APlayerController>(GetController()))
+        {
+            if (PC->GetViewTarget() != this)
+            {
+                PC->SetViewTarget(this);
+            }
         }
     }
 
@@ -762,7 +1050,7 @@ void ACWNativePlayerPawn::Tick(float DeltaSeconds)
         ApplyLocalMovement(DeltaSeconds);
     }
 
-    if (!bUseNativeRenderer || bNativeRunMenuOpen)
+    if (!bUseNativeRenderer || !IsNativeRunInputActive())
     {
         return;
     }
@@ -782,7 +1070,10 @@ void ACWNativePlayerPawn::Tick(float DeltaSeconds)
 
 void ACWNativePlayerPawn::ApplyLocalMovement(float DeltaSeconds)
 {
-    const FVector InputVector(FMath::Clamp(MoveForwardValue, -1.0f, 1.0f), FMath::Clamp(MoveRightValue, -1.0f, 1.0f), 0.0f);
+    const FVector InputVector(
+        FMath::Clamp(MoveRightValue, -1.0f, 1.0f),
+        FMath::Clamp(-MoveForwardValue, -1.0f, 1.0f),
+        0.0f);
     if (InputVector.IsNearlyZero())
     {
         return;
@@ -856,6 +1147,10 @@ void ACWNativePlayerPawn::SetNativeMouseButtonState(const FKey& Key, bool bIsDow
         return;
     }
 
+    if (!bIsDown)
+    {
+        EndNativeMenuDrag();
+    }
     bNativeLeftMouseDown = bIsDown;
     bShooting = bIsDown;
     if (IsNativeRunInputActive())
@@ -994,6 +1289,10 @@ void ACWNativePlayerPawn::UpdateNativeCursorViewportPosition(const FVector2D& Lo
             InputAccumulator = 0.0f;
         }
     }
+    if (bNativeRunMenuOpen && bNativeSoundVolumeDragging)
+    {
+        ApplyNativeSoundVolumeDrag(ClampedPosition.X);
+    }
 }
 
 bool ACWNativePlayerPawn::GetNativeCursorViewportPosition(FVector2D& OutLocalPosition, FVector2D& OutViewportSize) const
@@ -1010,6 +1309,12 @@ bool ACWNativePlayerPawn::GetNativeCursorViewportPosition(FVector2D& OutLocalPos
 
 void ACWNativePlayerPawn::RefreshNativeMovementFromKeys()
 {
+    if (!IsNativeRunInputActive())
+    {
+        ResetNativeInputState();
+        return;
+    }
+
     const APlayerController* PC = Cast<APlayerController>(GetController());
     const bool bWDown = bNativeWDown || (PC && PC->IsInputKeyDown(EKeys::W));
     const bool bADown = bNativeADown || (PC && PC->IsInputKeyDown(EKeys::A));
@@ -1036,12 +1341,143 @@ void ACWNativePlayerPawn::ResetNativeInputState()
     bNativeTouchMoveActive = false;
     bNativeTouchShooting = false;
     bHasNativeTouchAimVector = false;
+    bNativeSoundVolumeDragging = false;
     NativeTouchMoveVector = FVector2D::ZeroVector;
     NativeTouchAimVector = FVector2D::ZeroVector;
     MoveForwardValue = 0.0f;
     MoveRightValue = 0.0f;
     bShooting = false;
     bJumpQueued = false;
+}
+
+void ACWNativePlayerPawn::FlushNativePressedKeys()
+{
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->FlushPressedKeys();
+    }
+}
+
+bool ACWNativePlayerPawn::GetNativeRunSettingEnabled(const FString& SettingId) const
+{
+    if (const bool* Existing = NativeRunSettings.Find(SettingId))
+    {
+        return *Existing;
+    }
+    return DefaultNativeRunSettingEnabled(SettingId);
+}
+
+FString ACWNativePlayerPawn::GetNativeRunSettingValueLabel(const FString& SettingId) const
+{
+    if (SettingId == TEXT("graphics_quality"))
+    {
+        return NativeGraphicsQuality;
+    }
+    if (SettingId == TEXT("sound_volume"))
+    {
+        return FString::Printf(TEXT("%d%%"), FMath::Clamp(NativeSoundVolume, 0, 100));
+    }
+    if (SettingId == TEXT("language"))
+    {
+        return NativeLanguage;
+    }
+    return GetNativeRunSettingEnabled(SettingId) ? TEXT("ON") : TEXT("OFF");
+}
+
+void ACWNativePlayerPawn::SetNativeSoundVolume(int32 VolumePercent)
+{
+    NativeSoundVolume = FMath::Clamp(VolumePercent, 0, 100);
+}
+
+void ACWNativePlayerPawn::SetNativeCameraZoom(float Zoom)
+{
+    NativeCameraZoom = FMath::Clamp(Zoom, NativeCameraZoomMin, NativeCameraZoomMax);
+    if (bUseNative3DView)
+    {
+        if (Camera)
+        {
+            Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
+            ApplyNativeCameraTuning();
+        }
+    }
+    else if (Camera)
+    {
+        Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
+        ApplyNativeCameraTuning();
+    }
+    if (RunViewWidget)
+    {
+        RunViewWidget->InvalidateLayoutAndVolatility();
+    }
+}
+
+bool ACWNativePlayerPawn::AdjustNativeCameraZoom(float Steps)
+{
+    if (!IsNativeRunInputActive())
+    {
+        return false;
+    }
+
+    const float StepScale = FMath::Pow(1.16f, Steps);
+    SetNativeCameraZoom(NativeCameraZoom * StepScale);
+    return true;
+}
+
+void ACWNativePlayerPawn::ToggleNativeRunSetting(const FString& SettingId)
+{
+    if (!IsNativeRunCheckboxSetting(SettingId))
+    {
+        return;
+    }
+    NativeRunSettings.FindOrAdd(SettingId) = !GetNativeRunSettingEnabled(SettingId);
+}
+
+void ACWNativePlayerPawn::CycleNativeRunSettingValue(const FString& SettingId)
+{
+    if (SettingId == TEXT("graphics_quality"))
+    {
+        if (NativeGraphicsQuality.Equals(TEXT("Low"), ESearchCase::IgnoreCase))
+        {
+            NativeGraphicsQuality = TEXT("Medium");
+        }
+        else if (NativeGraphicsQuality.Equals(TEXT("Medium"), ESearchCase::IgnoreCase))
+        {
+            NativeGraphicsQuality = TEXT("High");
+        }
+        else
+        {
+            NativeGraphicsQuality = TEXT("Low");
+        }
+        return;
+    }
+    if (SettingId == TEXT("sound_volume"))
+    {
+        SetNativeSoundVolume(NativeSoundVolume >= 100 ? 0 : NativeSoundVolume + 10);
+        return;
+    }
+    if (SettingId == TEXT("language"))
+    {
+        NativeLanguage = NativeLanguage.Equals(TEXT("RU"), ESearchCase::IgnoreCase) ? TEXT("EN") : TEXT("RU");
+    }
+}
+
+void ACWNativePlayerPawn::EndNativeMenuDrag()
+{
+    bNativeSoundVolumeDragging = false;
+}
+
+void ACWNativePlayerPawn::BeginNativeSoundVolumeDrag(float MouseX, const FVector2D& RowPos, float ColumnW)
+{
+    NativeSoundVolumeDragTrackW = FMath::Max(1.0f, FMath::Clamp(ColumnW - 156.0f, 72.0f, 128.0f));
+    NativeSoundVolumeDragTrackX = RowPos.X + ColumnW - NativeSoundVolumeDragTrackW - 46.0f;
+    bNativeSoundVolumeDragging = true;
+    ApplyNativeSoundVolumeDrag(MouseX);
+}
+
+void ACWNativePlayerPawn::ApplyNativeSoundVolumeDrag(float MouseX)
+{
+    const float T = FMath::Clamp((MouseX - NativeSoundVolumeDragTrackX) / FMath::Max(1.0f, NativeSoundVolumeDragTrackW), 0.0f, 1.0f);
+    SetNativeSoundVolume(FMath::RoundToInt(T * 100.0f));
 }
 
 void ACWNativePlayerPawn::FirePressed()
@@ -1140,6 +1576,24 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
     const bool bWasNativeRenderer = bUseNativeRenderer;
     bUseNativeRenderer = bEnableNativeRenderer;
     bUseNative3DView = bEnableNativeRenderer && bEnableNative3DView;
+    if (SpringArm && Camera)
+    {
+        if (bUseNative3DView)
+        {
+            Camera->ProjectionMode = ECameraProjectionMode::Orthographic;
+            Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
+            SpringArm->SetRelativeRotation(FRotator(NativeRunCameraPitch, NativeRunCameraYaw, 0.0f));
+            SpringArm->TargetArmLength = 2400.0f;
+        }
+        else
+        {
+            Camera->ProjectionMode = ECameraProjectionMode::Orthographic;
+            Camera->OrthoWidth = NativeRunBaseOrthoWidth / NativeCameraZoom;
+            SpringArm->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));
+            SpringArm->TargetArmLength = 2600.0f;
+        }
+        ApplyNativeCameraTuning();
+    }
     NativeChatDraft.Reset();
     bNativeChatOpen = false;
     bNativeStatsPanelOpen = false;
@@ -1159,9 +1613,13 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
         if (WebMenuWidget)
         {
             WebMenuWidget->SuspendForNativeRun();
+            WebMenuWidget->RemoveFromParent();
+            WebMenuWidget = nullptr;
+            UE_LOG(LogTemp, Display, TEXT("Crimson Wars native UI: detached web menu widget for native renderer."));
         }
         if (PC)
         {
+            PC->SetViewTarget(this);
             EnsureNativeRunUi(PC);
             ApplyNativeRunInputMode(PC);
             EnableInput(PC);
@@ -1200,9 +1658,24 @@ void ACWNativePlayerPawn::SetNativeRenderMode(bool bEnableNativeRenderer, const 
 
 void ACWNativePlayerPawn::ApplyNativeRendererWidgetVisibility()
 {
+    if (bUseNativeRenderer && WebMenuWidget)
+    {
+        WebMenuWidget->RemoveFromParent();
+        WebMenuWidget = nullptr;
+        UE_LOG(LogTemp, Display, TEXT("Crimson Wars native UI: removed lingering web menu widget."));
+    }
+
     if (RunViewWidget)
     {
-        RunViewWidget->SetVisibility(bUseNativeRenderer && !bUseNative3DView ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+        if (bUseNativeRenderer && bUseNative3DView)
+        {
+            RunViewWidget->RemoveFromParent();
+            RunViewWidget = nullptr;
+        }
+        else
+        {
+            RunViewWidget->SetVisibility(bUseNativeRenderer ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+        }
     }
     if (RunHudWidget)
     {
@@ -1292,15 +1765,90 @@ bool ACWNativePlayerPawn::SendNativeRunInput(bool bConsumeJump)
     }
 
     RefreshNativeMovementFromKeys();
-    const FVector Aim = ResolveAimWorld();
+    FVector Aim = ResolveAimWorld();
+    bool bShouldShoot = bShooting;
+    const bool bAutoFire = GetNativeRunSettingEnabled(TEXT("auto_fire"));
+    const bool bAutoAim = GetNativeRunSettingEnabled(TEXT("auto_aim"));
+    if ((bAutoFire || bAutoAim) && !bShooting)
+    {
+        if (const FCWPlayerSnapshot* SelectedPlayer = FindAuthoritativePlayer())
+        {
+            if (const FCWEnemySnapshot* TargetEnemy = FindBestNativeAutoAimTarget(*SelectedPlayer))
+            {
+                if (bAutoAim)
+                {
+                    Aim = FVector(TargetEnemy->X, TargetEnemy->Y, 0.0f);
+                }
+                if (bAutoFire)
+                {
+                    bShouldShoot = true;
+                }
+            }
+        }
+    }
+
     const float MoveX = FMath::Clamp(MoveRightValue, -1.0f, 1.0f);
     const float MoveY = FMath::Clamp(-MoveForwardValue, -1.0f, 1.0f);
-    GI->SendInput(MoveX, MoveY, Aim.X, Aim.Y, bShooting, bJumpQueued);
+    GI->SendInput(MoveX, MoveY, Aim.X, Aim.Y, bShouldShoot, bJumpQueued);
     if (bConsumeJump)
     {
         bJumpQueued = false;
     }
     return true;
+}
+
+const FCWPlayerSnapshot* ACWNativePlayerPawn::FindAuthoritativePlayer() const
+{
+    const UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
+    if (!GI)
+    {
+        return nullptr;
+    }
+
+    const FCWPlayerSnapshot* SelectedPlayer = nullptr;
+    for (const FCWPlayerSnapshot& Player : GI->LatestState.Players)
+    {
+        if (!GI->MyId.IsEmpty() && Player.Id == GI->MyId)
+        {
+            return &Player;
+        }
+        if (!SelectedPlayer && !Player.bIsCompanion)
+        {
+            SelectedPlayer = &Player;
+        }
+    }
+    return SelectedPlayer;
+}
+
+const FCWEnemySnapshot* ACWNativePlayerPawn::FindBestNativeAutoAimTarget(const FCWPlayerSnapshot& Player) const
+{
+    const UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
+    if (!GI)
+    {
+        return nullptr;
+    }
+
+    const FCWEnemySnapshot* BestEnemy = nullptr;
+    float BestScore = MAX_flt;
+    for (const FCWEnemySnapshot& Enemy : GI->LatestState.Enemies)
+    {
+        if (Enemy.Hp <= 0.0f)
+        {
+            continue;
+        }
+
+        const float Dx = Enemy.X - Player.X;
+        const float Dy = Enemy.Y - Player.Y;
+        const float Radius = FMath::Max(1.0f, Enemy.Radius);
+        const float Score = Dx * Dx + Dy * Dy - Radius * Radius * 0.65f;
+        if (!BestEnemy || Score < BestScore)
+        {
+            BestEnemy = &Enemy;
+            BestScore = Score;
+        }
+    }
+
+    return BestEnemy;
 }
 
 FVector ACWNativePlayerPawn::ResolveAimWorld() const
@@ -1318,29 +1866,6 @@ FVector ACWNativePlayerPawn::ResolveAimWorld() const
     int32 ViewportY = 0;
     PC->GetViewportSize(ViewportX, ViewportY);
 
-    auto FindAuthoritativePlayer = [this]() -> const FCWPlayerSnapshot*
-    {
-        const UCWNativeGameInstance* GI = GetGameInstance<UCWNativeGameInstance>();
-        if (!GI)
-        {
-            return nullptr;
-        }
-
-        const FCWPlayerSnapshot* SelectedPlayer = nullptr;
-        for (const FCWPlayerSnapshot& Player : GI->LatestState.Players)
-        {
-            if (!GI->MyId.IsEmpty() && Player.Id == GI->MyId)
-            {
-                return &Player;
-            }
-            if (!SelectedPlayer && !Player.bIsCompanion)
-            {
-                SelectedPlayer = &Player;
-            }
-        }
-        return SelectedPlayer;
-    };
-
     if (bNativeTouchShooting && bHasNativeTouchAimVector && !NativeTouchAimVector.IsNearlyZero(0.01f))
     {
         if (const FCWPlayerSnapshot* SelectedPlayer = FindAuthoritativePlayer())
@@ -1353,6 +1878,24 @@ FVector ACWNativePlayerPawn::ResolveAimWorld() const
         }
     }
 
+    if (bUseNative3DView && PC->GetMousePosition(MouseX, MouseY))
+    {
+        FVector RayOrigin;
+        FVector RayDirection;
+        if (PC->DeprojectScreenPositionToWorld(MouseX, MouseY, RayOrigin, RayDirection))
+        {
+            const float Denom = RayDirection.Z;
+            if (!FMath::IsNearlyZero(Denom))
+            {
+                const float T = (0.0f - RayOrigin.Z) / Denom;
+                if (T > 0.0f)
+                {
+                    return RayOrigin + RayDirection * T;
+                }
+            }
+        }
+    }
+
     auto CursorVectorToServerAim = [&](const FVector2D& LocalMouse, const FVector2D& LocalViewportSize, FVector2D& OutAimWorld) -> bool
     {
         const FCWPlayerSnapshot* SelectedPlayer = FindAuthoritativePlayer();
@@ -1362,7 +1905,7 @@ FVector ACWNativePlayerPawn::ResolveAimWorld() const
         }
 
         constexpr float NativeViewWorldWidth = 2350.0f;
-        const float Scale = FMath::Clamp(LocalViewportSize.X / NativeViewWorldWidth, 0.38f, 1.05f);
+        const float Scale = FMath::Clamp((LocalViewportSize.X / NativeViewWorldWidth) * NativeCameraZoom, 0.30f, NativeCameraZoomMax);
         const FVector2D ScreenAimVector = LocalMouse - LocalViewportSize * 0.5f;
         OutAimWorld = FVector2D(
             SelectedPlayer->X + ScreenAimVector.X / Scale,
@@ -1433,7 +1976,7 @@ FVector ACWNativePlayerPawn::ResolveAimWorld() const
         if (SelectedPlayer)
         {
             constexpr float NativeViewWorldWidth = 2350.0f;
-            const float Scale = FMath::Clamp(static_cast<float>(ViewportX) / NativeViewWorldWidth, 0.38f, 1.05f);
+            const float Scale = FMath::Clamp((static_cast<float>(ViewportX) / NativeViewWorldWidth) * NativeCameraZoom, 0.30f, NativeCameraZoomMax);
             return FVector(
                 SelectedPlayer->X + (MouseX - static_cast<float>(ViewportX) * 0.5f) / Scale,
                 SelectedPlayer->Y + (MouseY - static_cast<float>(ViewportY) * 0.5f) / Scale,
